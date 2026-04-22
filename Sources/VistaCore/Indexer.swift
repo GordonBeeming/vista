@@ -213,8 +213,7 @@ public actor Indexer {
             let attrs = try? fm.attributesOfItem(atPath: url.path)
             let mtime = (attrs?[.modificationDate] as? Date) ?? Date()
             let size = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
-            if let existing = try? store.fingerprint(for: url),
-               existing.mtime == mtime, existing.size == size {
+            if (try? store.isAlreadyIndexed(at: url, mtime: mtime, size: size)) == true {
                 continue
             }
             toIndex.append(url)
@@ -313,8 +312,7 @@ public actor Indexer {
 
         // Skip unchanged files — the fingerprint check saves us an expensive
         // OCR pass for every file on every relaunch.
-        if let existing = try store.fingerprint(for: url),
-           existing.mtime == mtime, existing.size == size {
+        if try store.isAlreadyIndexed(at: url, mtime: mtime, size: size) {
             return
         }
 
