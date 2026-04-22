@@ -27,9 +27,24 @@ struct AboutView: View {
             VStack(spacing: 4) {
                 Text("Vista")
                     .font(.title).bold()
-                Text("v\(Self.appVersion)")
+                // Full build badge: version + commit when available. Clickable
+                // so users can jump straight to the release notes for the
+                // build they're running.
+                Button {
+                    if let url = BuildInfo.releaseOrCommitURL {
+                        NSWorkspace.shared.open(url)
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(BuildInfo.footerBadge).monospaced()
+                        Image(systemName: "arrow.up.forward.square").imageScale(.small)
+                    }
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Open release notes on GitHub")
+
                 Text("Search your screenshots by text, name, or date.")
                     .font(.body)
                     .foregroundStyle(.secondary)
@@ -112,10 +127,4 @@ struct AboutView: View {
         .buttonStyle(.plain)
     }
 
-    /// Reads CFBundleShortVersionString so the about window always shows
-    /// the same version the Finder Info panel would. Falls back to "dev"
-    /// when running unbundled via `swift run`.
-    private static var appVersion: String {
-        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "dev"
-    }
 }

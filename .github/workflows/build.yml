@@ -64,8 +64,16 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           # Strip the patch component if present, e.g. 0.1.0 → 0.1
           MAJOR_MINOR="$(echo "${VERSION}" | awk -F. '{print $1"."$2}')"
+          SHORT_SHA="${GITHUB_SHA:0:7}"
           chmod +x Scripts/build-release.sh
-          ./Scripts/build-release.sh "${MAJOR_MINOR}" "${{ github.run_number }}.${{ github.run_attempt }}"
+          # Pass the commit SHA and release tag so they land in Info.plist —
+          # the app's footer + About window link back to the release from
+          # whichever running binary a user has.
+          ./Scripts/build-release.sh \
+            "${MAJOR_MINOR}" \
+            "${{ github.run_number }}.${{ github.run_attempt }}" \
+            "${SHORT_SHA}" \
+            "${GITHUB_REF_NAME}"
 
       # Import the Developer ID certificate into a fresh keychain so codesign
       # can find it. Keeping it in a temporary keychain avoids touching

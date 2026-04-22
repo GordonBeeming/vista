@@ -27,6 +27,12 @@ ARCH="arm64"
 BUILD_CONFIG="release"
 APP_VERSION="${1:-0.1}"
 BUILD_NUMBER="${2:-1}"
+# Short commit SHA — baked into Info.plist so the running app can tell
+# you which source produced it. Defaults to the current checkout.
+GIT_COMMIT="${3:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}"
+# Release tag when built from a tag (e.g. "v0.1.0"); empty for dev builds.
+# Lets the About / panel footer link to /releases/tag/<tag> when available.
+RELEASE_TAG="${4:-}"
 
 # --- Validate inputs ---------------------------------------------------------
 if [[ ! "${APP_VERSION}" =~ ^[0-9]+\.[0-9]+$ ]]; then
@@ -125,6 +131,10 @@ cat > "${CONTENTS_DIR}/Info.plist" <<PLIST
     <string>Vista uses Apple Events to paste a selected screenshot into the front application.</string>
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © 2026 Gordon Beeming. MIT License.</string>
+    <key>VistaGitCommit</key>
+    <string>${GIT_COMMIT}</string>
+    <key>VistaReleaseTag</key>
+    <string>${RELEASE_TAG}</string>
 </dict>
 </plist>
 PLIST

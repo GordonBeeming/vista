@@ -184,6 +184,24 @@ struct PanelContentView: View {
             Image(systemName: "camera.viewfinder")
             Text("Vista")
                 .fontWeight(.medium)
+            // Build badge → opens the release page (or commit) on GitHub.
+            // Subtle so it doesn't pull focus from the primary-action hint
+            // on the right; still clickable for anyone who wants the notes.
+            if let url = BuildInfo.releaseOrCommitURL {
+                Button {
+                    NSWorkspace.shared.open(url)
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(BuildInfo.footerBadge)
+                            .monospaced()
+                        Image(systemName: "arrow.up.forward.square")
+                            .imageScale(.small)
+                    }
+                    .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .help("Open release notes on GitHub")
+            }
             Spacer()
             HStack(spacing: 6) {
                 Text(preferences.primaryAction.label)
