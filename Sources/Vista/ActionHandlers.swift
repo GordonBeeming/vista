@@ -42,6 +42,13 @@ public final class ActionHandlers {
 
     private let store: ScreenshotStore
 
+    /// Hook set by PanelController to carry out the activate-previous-
+    /// app + send-Cmd+V flow. Kept as a closure so VistaCore-side
+    /// ActionHandlers doesn't depend on AppKit window internals; the
+    /// PanelController knows which app had focus before vista's panel
+    /// summoned.
+    public var pasteToFrontImpl: ((URL) -> Void)?
+
     public init(store: ScreenshotStore) {
         self.store = store
     }
@@ -56,9 +63,13 @@ public final class ActionHandlers {
         case .copyImage:
             copyImage(at: record.path)
         case .pasteToFrontApp:
-            // Phase 3 wires AppleScript keystrokes into the front app.
-            // Until then, copy-and-document so the flow is still useful.
+            // Copy first so the target app has something on the clipboard
+            // even if the scripted Cmd+V fails (e.g. Automation not yet
+            // granted — first run will prompt). The impl closure dismisses
+            // the panel, reactivates the previous frontmost app, and
+            // sends a Cmd+V keystroke via AppleScript.
             copyImage(at: record.path)
+            pasteToFrontImpl?(record.path)
         case .showInFinder:
             NSWorkspace.shared.activateFileViewerSelecting([record.path])
         case .copyFilePath:

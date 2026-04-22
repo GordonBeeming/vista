@@ -44,6 +44,11 @@ struct AboutView: View {
                     .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+                // The About window has no other focusable controls, so
+                // SwiftUI draws its default focus ring around this button
+                // when the window is key. Opt out so the badge sits flat
+                // with the rest of the text.
+                .focusEffectDisabled()
                 .help("Open release notes on GitHub")
 
                 Text("Search your screenshots by text, name, or date.")

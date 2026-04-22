@@ -16,6 +16,11 @@ public final class PanelController {
     private let actions: ActionHandlers
     private let preferences: Preferences
 
+    /// The app that was frontmost when the user invoked vista's hotkey —
+    /// captured before we steal focus so "Paste to Front App" can aim
+    /// back at the original target rather than at vista itself.
+    private var previousFrontmostApp: NSRunningApplication?
+
     public init(
         store: ScreenshotStore,
         thumbnails: ThumbnailCache,
@@ -26,6 +31,13 @@ public final class PanelController {
         self.thumbnails = thumbnails
         self.actions = actions
         self.preferences = preferences
+
+        // Wire the paste-to-front-app action. The closure runs on the
+        // main actor (ActionHandlers is @MainActor) so it's safe to touch
+        // NSWorkspace and NSApp directly.
+        actions.pasteToFrontImpl = { [weak self] _ in
+            self?.pasteToPreviousFrontmost()
+        }
     }
 
     /// Toggle: if the panel is visible it hides, otherwise it appears.
@@ -34,16 +46,71 @@ public final class PanelController {
         if let panel, panel.isVisible {
             panel.orderOut(nil)
         } else {
+            capturePreviousFrontmost()
             show()
         }
     }
 
     public func show() {
+        capturePreviousFrontmost()
         let panel = ensurePanel()
         // Apply the latest panel-size preference every show so Appearance
         // slider changes take effect without needing a relaunch.
         panel.sizeFraction = preferences.panelSizeFraction
         panel.show()
+    }
+
+    /// Records whoever was frontmost before we activate. Skips vista
+    /// itself — if the user opens the panel while it's already visible
+    /// (e.g. via the menu bar) we don't want to overwrite the real
+    /// previous app with our own bundle id.
+    private func capturePreviousFrontmost() {
+        guard let app = NSWorkspace.shared.frontmostApplication else { return }
+        guard app.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
+        previousFrontmostApp = app
+    }
+
+    /// Dismisses the panel, reactivates the previously-frontmost app,
+    /// and sends a Cmd+V keystroke via Apple Events. Relies on the user
+    /// having granted the Automation permission for vista to control
+    /// System Events — the first invocation triggers the macOS prompt,
+    /// which also registers vista in the System Settings → Privacy →
+    /// Automation list so the toggle is usable thereafter.
+    ///
+    /// Guards on a non-nil `previousFrontmostApp`: if we never captured
+    /// a target (e.g. panel was opened from the menu bar and no other
+    /// app was frontmost), firing the Cmd+V anyway would paste into
+    /// whichever app bubbled up to frontmost after the panel hid —
+    /// often vista itself, or the user's Finder. Skipping is safer; the
+    /// clipboard copy already happened in ActionHandlers.
+    private func pasteToPreviousFrontmost() {
+        guard let target = previousFrontmostApp else {
+            panel?.orderOut(nil)
+            return
+        }
+        panel?.orderOut(nil)
+        // Activate after panel hides. A short delay gives AppKit time to
+        // process the orderOut before we ask another app to take focus;
+        // without it the frontmost-change can be dropped on the floor.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            // No-arg `activate()` is macOS 14+, which matches our deployment
+            // target; the options-based variant is deprecated on 14+ and
+            // `.activateIgnoringOtherApps` is itself a no-op there.
+            target.activate()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                Self.sendPasteKeystroke()
+            }
+        }
+    }
+
+    private static func sendPasteKeystroke() {
+        let source = #"tell application "System Events" to keystroke "v" using command down"#
+        guard let script = NSAppleScript(source: source) else { return }
+        var error: NSDictionary?
+        script.executeAndReturnError(&error)
+        if let error {
+            NSLog("vista: paste keystroke failed: \(error)")
+        }
     }
 
     private func ensurePanel() -> FloatingPanel {

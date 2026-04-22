@@ -134,24 +134,54 @@ public actor Indexer {
         let fm = FileManager.default
         var discovered: [URL] = []
 
+        VistaLog.log("initialScan starting with \(watchedFolders.count) folder(s)")
+
         for root in watchedFolders {
+            // Probe the folder before enumerating so a permission failure
+            // surfaces in the logs instead of silently returning zero.
+            var isDir: ObjCBool = false
+            let exists = fm.fileExists(atPath: root.path, isDirectory: &isDir)
+            VistaLog.log("  \(root.path) exists=\(exists) isDir=\(isDir.boolValue)")
+            guard exists, isDir.boolValue else {
+                VistaLog.log("  skipping — path does not exist or is not a directory")
+                continue
+            }
+
             guard let enumerator = fm.enumerator(
                 at: root,
                 includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey, .creationDateKey],
-                options: [.skipsHiddenFiles, .skipsPackageDescendants]
-            ) else { continue }
+                options: [.skipsHiddenFiles, .skipsPackageDescendants],
+                errorHandler: { url, error in
+                    // Returning true keeps the enumerator going; logging
+                    // the error gives us something to diagnose with when
+                    // iCloud placeholder files or permission-denied
+                    // subdirectories turn up.
+                    VistaLog.log("  enumerator error at \(url.path): \(error.localizedDescription)")
+                    return true
+                }
+            ) else {
+                VistaLog.log("  could not build enumerator for \(root.path)")
+                continue
+            }
 
+            var seen = 0
+            var matched = 0
             // `for in enumerator` drives NSFastEnumeration's makeIterator,
             // which Swift 6 treats as unavailable from async contexts. Manual
             // nextObject() avoids the sync/async mismatch without changing
             // the walk semantics.
             while let next = enumerator.nextObject() as? URL {
+                seen += 1
                 guard Self.isImageCandidate(next) else { continue }
                 let values = try? next.resourceValues(forKeys: [.isRegularFileKey])
                 guard values?.isRegularFile == true else { continue }
+                matched += 1
                 discovered.append(next)
             }
+            VistaLog.log("  enumerated \(seen) entries, matched \(matched) images under \(root.path)")
         }
+
+        VistaLog.log("initialScan discovered \(discovered.count) candidate files across \(watchedFolders.count) folder(s)")
 
         let total = discovered.count
         var done = 0

@@ -22,15 +22,18 @@ Requires macOS 14 (Sonoma) or later.
 
 ## Build from source
 
-```bash
-swift build -c release
-```
-
-Or run directly during development:
+For iterating locally, run `./Scripts/dev-run.sh`:
 
 ```bash
-swift run Vista
+./Scripts/dev-run.sh               # build, launch as Vista.app, tail the log
+./Scripts/dev-run.sh --no-tail     # skip the log tail for scripted runs
 ```
+
+That script does a debug build, wraps the binary in `Distribution/Vista.app` with a proper `Info.plist` (LSUIElement, icon, usage descriptions, the same `com.gordonbeeming.vista` bundle id the brew-installed copy uses), ad-hoc signs with a stable identifier so macOS's TCC keeps Automation and Full Disk Access grants across rebuilds, then `open`s it. Logs tail from `~/Library/Logs/Vista/vista.log`.
+
+Matching the brew bundle id means dev and prod share TCC + `UserDefaults`, so a single permission grant carries across. The script `pkills` both any running brew copy and any previous dev process first. Never run both at once.
+
+For a proper signed + notarised release build (what CI does), see `Scripts/build-release.sh`.
 
 ## License
 

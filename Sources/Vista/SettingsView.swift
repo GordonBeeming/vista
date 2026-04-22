@@ -131,7 +131,7 @@ struct SettingsView: View {
         switch selection {
         case .general:     GeneralTab(preferences: preferences, appState: appState)
         case .behaviour:   BehaviourTab(preferences: preferences)
-        case .folders:     FoldersTab(preferences: preferences)
+        case .folders:     FoldersTab(preferences: preferences, appState: appState)
         case .search:      SearchTab(preferences: preferences)
         case .appearance:  AppearanceTab(preferences: preferences)
         case .shortcuts:   ShortcutsTab(preferences: preferences)
@@ -187,6 +187,7 @@ private struct BehaviourTab: View {
 @MainActor
 private struct FoldersTab: View {
     @Bindable var preferences: Preferences
+    let appState: AppState
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -260,10 +261,18 @@ private struct FoldersTab: View {
             }
 
             HStack {
+                Button("Rescan Now") { appState.rescanNow() }
+                    .help("Re-walk every watched folder from scratch — useful after adding a new folder, or to pick up anything FSEvents might have missed.")
                 Spacer()
                 Button("Add Folder…") { addFolder() }
                     .controlSize(.large)
             }
+
+            // Live count so the user can confirm the scan actually picked
+            // files up after adding a folder.
+            Text("Indexed screenshots: \(appState.indexedCount)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             Toggle("Include all images & movies", isOn: $preferences.includeAllMedia)
                 .help("Index every image and video in watched folders, not just files that look like screenshots.")
@@ -436,26 +445,41 @@ private struct ShortcutsTab: View {
 private struct PermissionsTab: View {
     let appState: AppState
 
+    /// Refreshed on appear and whenever the user grants / opens settings.
+    /// Kept in state so the green/grey chip updates without a relaunch.
+    @State private var automationState: PermissionProbe.State = .unknown
+    @State private var fdaState: PermissionProbe.State = .unknown
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Vista needs a few macOS permissions to work. Grant them here, or from System Settings → Privacy & Security.")
+            Text("Vista only needs one macOS permission — and only if you use Paste to Front App. Everything else runs without extra grants.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
-            PermissionRow(
-                title: "Accessibility",
-                description: "Required to register the global hotkey.",
-                openPane: "Privacy_Accessibility"
+            AutomationRow(
+                state: automationState,
+                onGrant: {
+                    // NSAppleScript path — definitely triggers the
+                    // macOS Automation prompt (and registers vista in
+                    // Privacy → Automation). Re-reads the state after
+                    // the user responds.
+                    automationState = PermissionProbe.requestAutomationForSystemEvents()
+                },
+                onOpenSettings: {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
             )
-            PermissionRow(
-                title: "Full Disk Access",
-                description: "Optional. Grant if you want to index folders outside of your home directory.",
-                openPane: "Privacy_AllFiles"
-            )
-            PermissionRow(
-                title: "Automation (System Events)",
-                description: "Required for the ‘Paste to Front App’ action.",
-                openPane: "Privacy_Automation"
+
+            OptionalFullDiskRow(
+                state: fdaState,
+                onOpenSettings: {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
             )
 
             Divider()
@@ -470,31 +494,120 @@ private struct PermissionsTab: View {
             Spacer()
         }
         .padding(20)
+        .onAppear(perform: refreshProbes)
+        // Re-probe when the user comes back to our app. Covers the
+        // common flow where they click "Open Settings", toggle the
+        // permission in System Settings → Privacy, and return here —
+        // without this the chip would stay stale until they switched
+        // away and back to the Permissions tab.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshProbes()
+        }
+    }
+
+    private func refreshProbes() {
+        automationState = PermissionProbe.automationForSystemEvents()
+        fdaState = PermissionProbe.fullDiskAccess()
     }
 }
 
-private struct PermissionRow: View {
-    let title: String
-    let description: String
-    let openPane: String
+private struct AutomationRow: View {
+    let state: PermissionProbe.State
+    let onGrant: () -> Void
+    let onOpenSettings: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "checkmark.shield")
-                .foregroundStyle(.tint)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).bold()
-                Text(description).font(.caption).foregroundStyle(.secondary)
+            Image(systemName: state.symbol)
+                .foregroundStyle(state == .granted ? .green : state == .denied ? .red : .secondary)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text("Paste to Front App").bold()
+                    Text(state.label)
+                        .font(.caption)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color(nsColor: .separatorColor).opacity(0.4))
+                        .clipShape(Capsule())
+                }
+                Text(hint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
-            Button("Open") {
-                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(openPane)") {
-                    NSWorkspace.shared.open(url)
-                }
+            if state == .granted {
+                Button("Open Settings", action: onOpenSettings)
+            } else if state == .denied {
+                Button("Open Settings", action: onOpenSettings)
+            } else {
+                Button("Grant", action: onGrant)
+                    .buttonStyle(.borderedProminent)
             }
         }
         .padding(10)
         .background(Color(nsColor: .textBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private var hint: String {
+        switch state {
+        case .granted:
+            return "Vista can send a Cmd+V to the frontmost app when you pick Paste to Front App. You're all set."
+        case .denied:
+            return "Automation is denied in System Settings. Toggle it back on if you want Paste to Front App to work."
+        case .notDetermined:
+            return "Needed only for Paste to Front App. Clicking Grant triggers a one-time macOS prompt — you can revoke anytime."
+        case .unknown:
+            return "Couldn't read the current state. Open System Settings → Privacy → Automation to check."
+        }
+    }
+}
+
+private struct OptionalFullDiskRow: View {
+    let state: PermissionProbe.State
+    let onOpenSettings: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: state == .granted ? "checkmark.circle.fill" : "externaldrive.badge.checkmark")
+                .foregroundStyle(state == .granted ? .green : .secondary)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text("Full Disk Access").bold()
+                    Text(badge)
+                        .font(.caption)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color(nsColor: .separatorColor).opacity(0.4))
+                        .clipShape(Capsule())
+                }
+                Text(hint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button("Open Settings", action: onOpenSettings)
+        }
+        .padding(10)
+        .background(Color(nsColor: .textBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private var badge: String {
+        switch state {
+        case .granted: return "Granted · Optional"
+        case .denied, .notDetermined, .unknown: return "Optional"
+        }
+    }
+
+    private var hint: String {
+        switch state {
+        case .granted:
+            return "Full Disk Access is on — vista can index protected locations. You don't need this unless you want to, since folders added via Folders already work via security-scoped bookmarks."
+        case .denied, .notDetermined, .unknown:
+            return "Not required. Folders you add with the Folders tab work via security-scoped bookmarks without any system-wide grant. Enable Full Disk Access only if you want Vista to index protected locations it otherwise can't read."
+        }
     }
 }

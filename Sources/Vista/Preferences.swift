@@ -239,20 +239,29 @@ public final class Preferences {
     private let bookmarksURL: URL
 
     /// Resolves the system-default folder (if enabled) plus every
-    /// user-added folder. Starts security-scoped access on each
-    /// bookmarked URL.
+    /// user-added folder. Tries the security-scoped bookmark first, then
+    /// falls back to the stored plain path — vista runs unsandboxed, so
+    /// the path alone is enough to read the folder without any scoped
+    /// access. The fallback matters for:
+    ///   - ad-hoc-signed dev builds (each rebuild invalidates prior
+    ///     bookmarks because the code signature changes),
+    ///   - anyone whose bookmark has gone stale after an OS upgrade or
+    ///     folder move/rename.
     public func resolvedFolders() -> [URL] {
         var out: [URL] = []
         if watchDefaultFolder {
             out.append(VistaPaths.defaultScreenshotFolder())
         }
         for folder in watchedFolders {
-            if let url = folder.resolve(startAccess: true) {
-                // Avoid duplicate default-folder entries if the user
-                // bookmarks the same path the system returns.
-                if !out.contains(where: { $0.standardizedFileURL == url.standardizedFileURL }) {
-                    out.append(url)
-                }
+            let url: URL
+            if let bookmarked = folder.resolve(startAccess: true) {
+                url = bookmarked
+            } else {
+                VistaLog.log("bookmark resolve failed for \(folder.displayPath) — falling back to plain path (unsandboxed so no scope needed)")
+                url = URL(fileURLWithPath: folder.displayPath, isDirectory: true)
+            }
+            if !out.contains(where: { $0.standardizedFileURL == url.standardizedFileURL }) {
+                out.append(url)
             }
         }
         return out
