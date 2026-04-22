@@ -152,7 +152,7 @@ private struct GeneralTab: View {
             Toggle("Launch at login", isOn: $preferences.launchAtLogin)
             Toggle("Pause indexing", isOn: .init(
                 get: { appState.isPaused },
-                set: { _ in appState.togglePause() }
+                set: { appState.setPaused($0) }
             ))
         }
         .formStyle(.grouped)

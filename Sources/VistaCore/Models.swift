@@ -87,8 +87,11 @@ public struct Query: Equatable, Sendable {
     /// Terms that should match against OCR text (the `text:` prefix).
     public var textTerms: [String]
 
-    /// Parsed date clauses (the `date:` prefix). Each is an inclusive range.
-    public var dateRanges: [ClosedRange<Date>]
+    /// Parsed date clauses (the `date:` prefix). Half-open so records
+    /// with sub-second `captured_at` timestamps at the very end of a day
+    /// (e.g. 23:59:59.5) aren't excluded by an inclusive-upper bound like
+    /// 23:59:59 exactly. The store compiles these with `>= lower AND < upper`.
+    public var dateRanges: [Range<Date>]
 
     /// Bare terms — match either name OR ocr_text via FTS5.
     public var freeTerms: [String]
@@ -96,7 +99,7 @@ public struct Query: Equatable, Sendable {
     public init(
         nameTerms: [String] = [],
         textTerms: [String] = [],
-        dateRanges: [ClosedRange<Date>] = [],
+        dateRanges: [Range<Date>] = [],
         freeTerms: [String] = []
     ) {
         self.nameTerms = nameTerms

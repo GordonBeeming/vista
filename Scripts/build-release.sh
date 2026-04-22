@@ -130,7 +130,7 @@ cat > "${CONTENTS_DIR}/Info.plist" <<PLIST
     <key>NSAppleEventsUsageDescription</key>
     <string>Vista uses Apple Events to paste a selected screenshot into the front application.</string>
     <key>NSHumanReadableCopyright</key>
-    <string>Copyright © 2026 Gordon Beeming. MIT License.</string>
+    <string>Copyright © 2026 Gordon Beeming. Functional Source License 1.1 (FSL-1.1-MIT).</string>
     <key>VistaGitCommit</key>
     <string>${GIT_COMMIT}</string>
     <key>VistaReleaseTag</key>

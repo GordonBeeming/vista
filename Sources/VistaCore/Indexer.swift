@@ -32,7 +32,13 @@ public actor Indexer {
 
     private var isPaused = false
     private var isStarted = false
+    // Pending work is a growing list plus an index cursor. `removeFirst`
+    // on a Swift Array is O(n), which becomes quadratic under a burst of
+    // filesystem events. Advancing an index is O(1); we compact the list
+    // periodically once the cursor has moved far enough to be worth
+    // reclaiming memory.
     private var pendingPaths: [URL] = []
+    private var pendingIndex: Int = 0
     private var workTask: Task<Void, Never>?
     private var eventTask: Task<Void, Never>?
 
@@ -202,15 +208,26 @@ public actor Indexer {
 
     private func drainPending() async {
         defer { workTask = nil }
-        while !pendingPaths.isEmpty {
+        while pendingIndex < pendingPaths.count {
             if isPaused || Task.isCancelled { return }
-            let url = pendingPaths.removeFirst()
+            let url = pendingPaths[pendingIndex]
+            pendingIndex += 1
             do {
                 try await indexFile(url)
             } catch {
                 NSLog("vista: failed to index \(url.lastPathComponent): \(error)")
             }
+            // Compact occasionally so pendingPaths.count doesn't grow
+            // unboundedly across many FS bursts. 256 is large enough to
+            // skip the reclaim in the common small-burst case but keeps
+            // memory bounded for pathological workloads.
+            if pendingIndex >= 256 {
+                pendingPaths.removeFirst(pendingIndex)
+                pendingIndex = 0
+            }
         }
+        pendingPaths.removeAll(keepingCapacity: false)
+        pendingIndex = 0
         await emitWatchingProgress()
     }
 

@@ -22,6 +22,12 @@ public final class FSEventsWatcher: @unchecked Sendable {
     }
 
     private var stream: FSEventStreamRef?
+    // The continuation is the write end of `events`; we hold it weakly
+    // (effectively) by only finishing it in `deinit`. Finishing it in
+    // `stop()` would break `updateWatchedFolders` in the indexer, which
+    // calls `stop()` followed by `start()` to swap the watched paths —
+    // once a continuation is finished, future `yield`s are silently
+    // dropped, so the restarted watcher would appear to do nothing.
     private var continuation: AsyncStream<Change>.Continuation?
 
     public let events: AsyncStream<Change>
@@ -95,7 +101,19 @@ public final class FSEventsWatcher: @unchecked Sendable {
             FSEventStreamRelease(stream)
             self.stream = nil
         }
+        // Intentionally do NOT finish the continuation here — see the
+        // comment on the stored property. Callers that really want the
+        // stream to end drop the watcher entirely; deinit takes care of
+        // it.
+    }
+
+    /// Closes the events stream permanently. Called automatically on
+    /// deinit; exposed so callers can wind things down early if they're
+    /// sure they won't restart the watcher.
+    public func close() {
+        stop()
         continuation?.finish()
+        continuation = nil
     }
 
     // MARK: - Callback dispatch
@@ -123,5 +141,12 @@ public final class FSEventsWatcher: @unchecked Sendable {
         }
     }
 
-    deinit { stop() }
+    deinit {
+        if let stream {
+            FSEventStreamStop(stream)
+            FSEventStreamInvalidate(stream)
+            FSEventStreamRelease(stream)
+        }
+        continuation?.finish()
+    }
 }

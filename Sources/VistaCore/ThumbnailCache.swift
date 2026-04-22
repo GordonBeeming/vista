@@ -13,7 +13,6 @@ import Foundation
 import AppKit
 import ImageIO
 import CryptoKit
-import UniformTypeIdentifiers
 
 public final class ThumbnailCache: @unchecked Sendable {
 
@@ -42,8 +41,16 @@ public final class ThumbnailCache: @unchecked Sendable {
     /// Returns a thumbnail, rendering and persisting it if needed.
     /// `sourceMtime` is the source file's current mtime — when it differs
     /// from the mtime encoded in the cached filename, we regenerate.
-    public func thumbnail(for source: URL, size: Size, sourceMtime: Date) throws -> NSImage {
-        let key = Self.cacheKey(for: source, size: size, mtime: sourceMtime)
+    /// Pass `sourceSize` when possible; it's rolled into the cache key so
+    /// a file that changes inside the same second (and therefore keeps
+    /// the same whole-second mtime) still invalidates the cached image.
+    public func thumbnail(
+        for source: URL,
+        size: Size,
+        sourceMtime: Date,
+        sourceSize: Int64? = nil
+    ) throws -> NSImage {
+        let key = Self.cacheKey(for: source, size: size, mtime: sourceMtime, sourceSize: sourceSize)
         if let cached = memoryCache.object(forKey: key as NSString) {
             return cached
         }
@@ -104,11 +111,15 @@ public final class ThumbnailCache: @unchecked Sendable {
         try data.write(to: url)
     }
 
-    private static func cacheKey(for source: URL, size: Size, mtime: Date) -> String {
-        // Include mtime in the key so an updated source file doesn't
-        // read through a stale cached thumbnail.
+    private static func cacheKey(for source: URL, size: Size, mtime: Date, sourceSize: Int64?) -> String {
+        // mtime alone can collide when a file changes twice inside the
+        // same whole second — including file size (when known) disambiguates
+        // same-second rewrites. Higher-precision timestamps vary by APFS
+        // semantics and aren't reliable across copy/move, so size is the
+        // cheapest stable tiebreaker we have.
         let mtimeStamp = Int(mtime.timeIntervalSince1970)
-        return "\(pathHash(source))-\(mtimeStamp)-\(size.rawValue)"
+        let sizeTag = sourceSize.map(String.init) ?? "?"
+        return "\(pathHash(source))-\(mtimeStamp)-\(sizeTag)-\(size.rawValue)"
     }
 
     private static func pathHash(_ url: URL) -> String {

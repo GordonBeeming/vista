@@ -11,7 +11,6 @@ import Foundation
 @preconcurrency import Vision
 import CoreGraphics
 import ImageIO
-import AppKit
 
 public final class OCRRecognizer: Sendable {
 

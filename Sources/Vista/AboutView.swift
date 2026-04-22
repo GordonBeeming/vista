@@ -80,7 +80,7 @@ struct AboutView: View {
 
             Spacer(minLength: 4)
 
-            Text("MIT License · © 2026 Gordon Beeming")
+            Text("FSL-1.1-MIT · © 2026 Gordon Beeming")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }

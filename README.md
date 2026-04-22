@@ -34,4 +34,4 @@ swift run Vista
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+Licensed under [FSL-1.1-MIT](LICENSE). Converts to MIT two years after each release.

@@ -151,8 +151,16 @@ final class AppState {
     }
 
     func togglePause() {
-        isPaused.toggle()
-        let paused = isPaused
+        setPaused(!isPaused)
+    }
+
+    /// Explicit setter used by UI bindings that receive a `newValue` —
+    /// applying `newValue` directly instead of blindly toggling keeps the
+    /// UI and the indexer in sync even if SwiftUI replays a state update
+    /// or programmatic code sets the property.
+    func setPaused(_ paused: Bool) {
+        guard isPaused != paused else { return }
+        isPaused = paused
         Task { [indexer] in await indexer?.setPaused(paused) }
     }
 

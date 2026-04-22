@@ -353,7 +353,12 @@ private struct ResultCell: View {
             // thumbnail generation. Re-fires when thumbSize changes so the
             // preview-size slider takes effect without a reload.
             let loaded = await Task.detached(priority: .userInitiated) { [record, thumbSize] in
-                try? thumbnails.thumbnail(for: record.path, size: thumbSize, sourceMtime: record.mtime)
+                try? thumbnails.thumbnail(
+                    for: record.path,
+                    size: thumbSize,
+                    sourceMtime: record.mtime,
+                    sourceSize: record.size
+                )
             }.value
             self.image = loaded
         }
@@ -361,9 +366,7 @@ private struct ResultCell: View {
 
     /// Relative-date caption matching the "Today at 14:27" style Raycast uses.
     private static func caption(for record: ScreenshotRecord) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return record.capturedAt.timeAgoStyle()
+        record.capturedAt.timeAgoStyle()
     }
 }
 

@@ -22,7 +22,7 @@ public enum QueryParser {
     public static func parse(_ raw: String, reference: Date = Date()) -> Query {
         var nameTerms: [String] = []
         var textTerms: [String] = []
-        var dateRanges: [ClosedRange<Date>] = []
+        var dateRanges: [Range<Date>] = []
         var freeTerms: [String] = []
 
         for token in tokenise(raw) {
@@ -93,7 +93,11 @@ public enum QueryParser {
 
     // MARK: - Dates
 
-    /// Parses a date fragment into an inclusive range. Supports:
+    /// Parses a date fragment into a half-open range `[start, nextStart)`.
+    /// Half-open semantics avoid off-by-subsecond bugs: a record with
+    /// `captured_at` at 23:59:59.5 falls inside the day that contains it
+    /// rather than being excluded by an inclusive upper bound that stops
+    /// one second early. Supports:
     ///   today / yesterday
     ///   last week / this week
     ///   last month / this month
@@ -101,7 +105,7 @@ public enum QueryParser {
     ///   YYYY
     ///   YYYY-MM
     ///   YYYY-MM-DD
-    private static func parseDate(_ raw: String, reference: Date) -> ClosedRange<Date>? {
+    private static func parseDate(_ raw: String, reference: Date) -> Range<Date>? {
         let calendar = Calendar(identifier: .gregorian)
         let normalised = raw.lowercased()
             .replacingOccurrences(of: "_", with: " ")
@@ -167,32 +171,32 @@ public enum QueryParser {
         return nil
     }
 
-    private static func dayRange(containing date: Date, calendar: Calendar) -> ClosedRange<Date> {
+    private static func dayRange(containing date: Date, calendar: Calendar) -> Range<Date> {
         let start = calendar.startOfDay(for: date)
-        let end = calendar.date(byAdding: .day, value: 1, to: start)!.addingTimeInterval(-1)
-        return start...end
+        let end = calendar.date(byAdding: .day, value: 1, to: start)!
+        return start..<end
     }
 
-    private static func weekRange(containing date: Date, calendar: Calendar) -> ClosedRange<Date> {
+    private static func weekRange(containing date: Date, calendar: Calendar) -> Range<Date> {
         var cal = calendar
         cal.firstWeekday = 2 // Monday — matches ISO and most European locales.
         let start = cal.dateInterval(of: .weekOfYear, for: date)?.start ?? date
-        let endDay = cal.date(byAdding: .day, value: 7, to: start)!.addingTimeInterval(-1)
-        return start...endDay
+        let end = cal.date(byAdding: .day, value: 7, to: start)!
+        return start..<end
     }
 
-    private static func monthRange(containing date: Date, calendar: Calendar) -> ClosedRange<Date> {
+    private static func monthRange(containing date: Date, calendar: Calendar) -> Range<Date> {
         let comps = calendar.dateComponents([.year, .month], from: date)
         let start = calendar.date(from: comps)!
-        let end = calendar.date(byAdding: DateComponents(month: 1, second: -1), to: start)!
-        return start...end
+        let end = calendar.date(byAdding: DateComponents(month: 1), to: start)!
+        return start..<end
     }
 
-    private static func yearRange(containing date: Date, calendar: Calendar) -> ClosedRange<Date> {
+    private static func yearRange(containing date: Date, calendar: Calendar) -> Range<Date> {
         let year = calendar.component(.year, from: date)
         let start = calendar.date(from: DateComponents(year: year, month: 1, day: 1))!
-        let end = calendar.date(from: DateComponents(year: year + 1, month: 1, day: 1))!.addingTimeInterval(-1)
-        return start...end
+        let end = calendar.date(from: DateComponents(year: year + 1, month: 1, day: 1))!
+        return start..<end
     }
 
     private static let monthNames: [(String, Int)] = [

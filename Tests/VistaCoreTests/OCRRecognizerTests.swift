@@ -8,6 +8,7 @@
 import XCTest
 import AppKit
 import CoreGraphics
+import CoreText
 @testable import VistaCore
 
 final class OCRRecognizerTests: XCTestCase {

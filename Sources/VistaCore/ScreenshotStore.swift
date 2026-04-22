@@ -342,7 +342,10 @@ public final class ScreenshotStore: @unchecked Sendable {
             }
 
             for range in query.dateRanges {
-                nonFTSClauses.append("captured_at BETWEEN ? AND ?")
+                // Half-open on both ends so a record at exactly the upper
+                // bound (next day's midnight) belongs to the next bucket,
+                // and one at the lower bound belongs to this one.
+                nonFTSClauses.append("captured_at >= ? AND captured_at < ?")
                 binds.append(.double(range.lowerBound.timeIntervalSince1970))
                 binds.append(.double(range.upperBound.timeIntervalSince1970))
             }
