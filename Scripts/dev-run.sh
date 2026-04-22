@@ -145,8 +145,22 @@ if [[ "${TAIL}" -eq 1 ]]; then
   mkdir -p "$(dirname "${LOG}")"
   # Create the file if the app hasn't written it yet, so tail doesn't error.
   touch "${LOG}"
+
+  # Ctrl-C (or any exit) means "I'm done dev-running": kill the dev app and
+  # delete the bundle so nothing lingers. Leaving the dev copy around is a
+  # real hazard — it shares com.gordonbeeming.vista with the brew-installed
+  # prod, and a stale dev build silently wins the hotkey on next login.
+  # Scoped to the tailing branch only — `--no-tail` is fire-and-forget.
+  cleanup() {
+    echo ""
+    echo "🧹 Stopping Vista and removing ${APP}"
+    pkill -x "Vista" 2>/dev/null || true
+    rm -rf "${APP}"
+  }
+  trap cleanup EXIT
+
   echo ""
-  echo "📜 Tailing ${LOG} (Ctrl-C to stop — app keeps running)"
+  echo "📜 Tailing ${LOG} (Ctrl-C to stop the app & remove the dev bundle)"
   echo ""
   tail -f "${LOG}"
 fi
