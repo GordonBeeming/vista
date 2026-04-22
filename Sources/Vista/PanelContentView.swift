@@ -7,13 +7,19 @@
 //   - Bottom bar: current primary action + "Actions" trigger (⌘K, stub).
 //
 // Keyboard handling:
-//   - Arrow keys move selection
-//   - Enter runs primary action
-//   - Esc dismisses the panel (handled at the panel level, not here)
-//   - ⌘P pin/unpin
-//   - ⌘⇧C copy OCR text
+//   - Left / Right move selection by ±1 (same row)
+//   - Up / Down move selection by ±columnCount (same column, adjacent row)
+//   - Enter runs primary action, Esc dismisses, ⌘P pins, ⌘⇧C copies OCR
+//
+// All arrow handling goes through a window-scoped NSEvent local monitor,
+// not SwiftUI's .onKeyPress — the search field (always focused) would
+// otherwise consume Left/Right for cursor movement and swallow the
+// events before any SwiftUI handler saw them. The monitor lives only
+// while the panel is on screen.
 
 import SwiftUI
+import AppKit
+import Carbon.HIToolbox
 import VistaCore
 
 struct PanelContentView: View {
@@ -26,6 +32,16 @@ struct PanelContentView: View {
     // Drives keyboard focus so the search field is live the moment the
     // panel appears — users shouldn't have to click to start typing.
     @FocusState private var searchFocused: Bool
+
+    // Columns currently rendered by the LazyVGrid. Recomputed whenever
+    // the grid's width or the preview-size preference changes, and
+    // consumed by the arrow-key handler for up/down row jumps.
+    @State private var columnCount: Int = 1
+
+    // Token for the NSEvent local monitor. Installed while the panel is
+    // visible; removed on disappear so it doesn't leak and so it doesn't
+    // keep intercepting events when the panel is hidden.
+    @State private var keyMonitor: Any?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -41,7 +57,8 @@ struct PanelContentView: View {
         }
         .background(.regularMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .onKeyPress { press in handleKey(press) }
+        .onAppear { installKeyMonitor() }
+        .onDisappear { removeKeyMonitor() }
     }
 
     // MARK: - Sections
@@ -107,26 +124,59 @@ struct PanelContentView: View {
         // thumbnail, not an upscaled 512-px one).
         let target = preferences.thumbnailSize
         let thumbCacheSize: ThumbnailCache.Size = target > 380 ? .large : target > 180 ? .medium : .small
-        return ScrollView {
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: target, maximum: target * 1.6), spacing: 16)],
-                spacing: 16
-            ) {
-                ForEach(Array(model.results.enumerated()), id: \.element.id) { index, record in
-                    ResultCell(
-                        record: record,
-                        isSelected: index == model.selectedIndex,
-                        thumbnails: thumbnails,
-                        thumbSize: thumbCacheSize
-                    )
-                    .onTapGesture {
-                        model.selectedIndex = index
-                        runPrimary()
+        let spacing: CGFloat = 16
+        return GeometryReader { proxy in
+            ScrollView {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: target, maximum: target * 1.6), spacing: spacing)],
+                    spacing: spacing
+                ) {
+                    ForEach(Array(model.results.enumerated()), id: \.element.id) { index, record in
+                        ResultCell(
+                            record: record,
+                            isSelected: index == model.selectedIndex,
+                            thumbnails: thumbnails,
+                            thumbSize: thumbCacheSize
+                        )
+                        .onTapGesture {
+                            model.selectedIndex = index
+                            runPrimary()
+                        }
                     }
                 }
+                .padding(spacing)
             }
-            .padding(16)
+            // Keep columnCount in sync with the actual layout. The formula
+            // mirrors what LazyVGrid.adaptive does internally: pick the
+            // largest N where N*minCol + (N-1)*spacing ≤ usableWidth.
+            .onAppear {
+                columnCount = Self.columnsFor(
+                    width: proxy.size.width,
+                    target: target,
+                    spacing: spacing
+                )
+            }
+            .onChange(of: proxy.size.width) { _, newWidth in
+                columnCount = Self.columnsFor(
+                    width: newWidth,
+                    target: target,
+                    spacing: spacing
+                )
+            }
+            .onChange(of: target) { _, newTarget in
+                columnCount = Self.columnsFor(
+                    width: proxy.size.width,
+                    target: newTarget,
+                    spacing: spacing
+                )
+            }
         }
+    }
+
+    private static func columnsFor(width: CGFloat, target: Double, spacing: CGFloat) -> Int {
+        let usable = max(1, width - spacing * 2)  // subtract the grid's own padding
+        let count = Int(floor((usable + spacing) / (CGFloat(target) + spacing)))
+        return max(1, count)
     }
 
     private var footer: some View {
@@ -154,39 +204,80 @@ struct PanelContentView: View {
 
     // MARK: - Keyboard
 
-    private func handleKey(_ press: KeyPress) -> KeyPress.Result {
-        switch press.key {
-        case .downArrow:
-            model.moveSelection(by: 1)
-            return .handled
-        case .upArrow:
-            model.moveSelection(by: -1)
-            return .handled
-        case .return:
-            runPrimary()
-            return .handled
-        case .escape:
-            dismiss()
-            return .handled
-        default:
-            // ⌘P pin, ⌘⇧C copy OCR
-            if press.modifiers.contains(.command) {
-                if press.characters == "p" {
-                    if let rec = model.selectedRecord {
-                        actions.run(.togglePin, on: rec)
-                        model.reload()
-                    }
-                    return .handled
-                }
-                if press.modifiers.contains(.shift), press.characters.lowercased() == "c" {
-                    if let rec = model.selectedRecord {
-                        actions.run(.copyOCRText, on: rec)
-                    }
-                    return .handled
-                }
-            }
-            return .ignored
+    /// Installs an NSEvent local monitor so arrow keys and shortcuts
+    /// reach grid navigation even while the TextField is focused. The
+    /// TextField would otherwise consume Left/Right for cursor movement
+    /// and the grid would appear non-interactive — `.onKeyPress` on
+    /// ancestor views doesn't preempt the focused responder.
+    private func installKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            handlePanelKey(event)
         }
+    }
+
+    private func removeKeyMonitor() {
+        if let monitor = keyMonitor {
+            NSEvent.removeMonitor(monitor)
+            keyMonitor = nil
+        }
+    }
+
+    /// Returns the event unchanged when we don't want to handle it —
+    /// that's how the TextField still receives characters to type. Returns
+    /// nil to swallow (arrow keys, Enter, Esc, our ⌘-chords).
+    private func handlePanelKey(_ event: NSEvent) -> NSEvent? {
+        // Only act on events delivered to our panel window. Otherwise a
+        // user typing in another app's textbox while the panel is hidden-
+        // but-alive would have their keys eaten.
+        guard event.window?.identifier == nil || event.window === NSApp.keyWindow else {
+            return event
+        }
+
+        let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+        switch Int(event.keyCode) {
+        case kVK_LeftArrow:
+            model.moveSelection(by: -1)
+            return nil
+        case kVK_RightArrow:
+            model.moveSelection(by: 1)
+            return nil
+        case kVK_UpArrow:
+            model.moveSelection(by: -columnCount)
+            return nil
+        case kVK_DownArrow:
+            model.moveSelection(by: columnCount)
+            return nil
+        case kVK_Return:
+            runPrimary()
+            return nil
+        case kVK_Escape:
+            dismiss()
+            return nil
+        default:
+            break
+        }
+
+        // ⌘P → pin toggle; ⌘⇧C → copy OCR text.
+        if mods.contains(.command), !mods.contains(.option), !mods.contains(.control) {
+            let chars = event.charactersIgnoringModifiers?.lowercased() ?? ""
+            if chars == "p", !mods.contains(.shift) {
+                if let rec = model.selectedRecord {
+                    actions.run(.togglePin, on: rec)
+                    model.reload()
+                }
+                return nil
+            }
+            if chars == "c", mods.contains(.shift) {
+                if let rec = model.selectedRecord {
+                    actions.run(.copyOCRText, on: rec)
+                }
+                return nil
+            }
+        }
+
+        return event
     }
 
     private func runPrimary() {
