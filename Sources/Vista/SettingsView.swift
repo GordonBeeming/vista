@@ -10,47 +10,125 @@ import SwiftUI
 import AppKit
 import VistaCore
 
+/// Tabs shown at the top of the preferences window. Kept as an enum so
+/// the identifier, label, and icon all live in one place and the switch
+/// in the body is exhaustively checked.
+private enum PrefTab: String, CaseIterable, Identifiable {
+    case general, behaviour, folders, search, appearance, shortcuts, permissions
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .general:     return "General"
+        case .behaviour:   return "Behaviour"
+        case .folders:     return "Folders"
+        case .search:      return "Search"
+        case .appearance:  return "Appearance"
+        case .shortcuts:   return "Shortcuts"
+        case .permissions: return "Permissions"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .general:     return "gear"
+        case .behaviour:   return "return"
+        case .folders:     return "folder"
+        case .search:      return "magnifyingglass"
+        case .appearance:  return "rectangle.on.rectangle"
+        case .shortcuts:   return "command"
+        case .permissions: return "checkmark.shield"
+        }
+    }
+}
+
 struct SettingsView: View {
     @Bindable var preferences: Preferences
     let appState: AppState
 
+    @State private var selection: PrefTab = .general
+
     var body: some View {
-        TabView {
-            GeneralTab(preferences: preferences, appState: appState)
-                .tabItem { Label("General", systemImage: "gear") }
-
-            BehaviourTab(preferences: preferences)
-                .tabItem { Label("Behaviour", systemImage: "return") }
-
-            FoldersTab(preferences: preferences)
-                .tabItem { Label("Folders", systemImage: "folder") }
-
-            SearchTab(preferences: preferences)
-                .tabItem { Label("Search", systemImage: "magnifyingglass") }
-
-            AppearanceTab(preferences: preferences)
-                .tabItem { Label("Appearance", systemImage: "rectangle.on.rectangle") }
-
-            ShortcutsTab(preferences: preferences)
-                .tabItem { Label("Shortcuts", systemImage: "command") }
-
-            PermissionsTab(appState: appState)
-                .tabItem { Label("Permissions", systemImage: "checkmark.shield") }
+        VStack(spacing: 0) {
+            tabBar
+            Divider()
+            // The selected tab's content. Wrapped in a fixed-height frame
+            // so the window doesn't resize as the user switches tabs —
+            // matches how macOS's built-in Settings window feels.
+            tabContent
+                .frame(maxWidth: .infinity, minHeight: 380, alignment: .top)
         }
-        .frame(width: 540, height: 420)
-        .padding(.top, 10)
-        // Belt-and-braces window raise: even with NSApp.activate at the
-        // call site, a preferences window in an agent app can stay
-        // layered behind the frontmost app. Match by our explicit
-        // identifier so we don't accidentally raise an unrelated window.
+        .frame(width: 560)
+        .background(Color(nsColor: .windowBackgroundColor))
+        // Belt-and-braces window raise — matches the openPreferencesWindow
+        // logic in MenuBarContentView, here as a final safety net in case
+        // the window is created in response to Cmd+, (menu path bypassed).
         .onAppear {
             DispatchQueue.main.async {
                 NSApp.activate(ignoringOtherApps: true)
                 if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == "vista.preferences" }) {
                     window.orderFrontRegardless()
                     window.makeKeyAndOrderFront(nil)
+                    PreferencesActivation.didOpen(window)
                 }
             }
+        }
+    }
+
+    // MARK: - Tab bar
+
+    /// Horizontal row of icon+label buttons styled like the macOS
+    /// preferences window. Rolled by hand because SwiftUI's TabView
+    /// renders as a navigation popover inside a regular Window scene —
+    /// the classic top-tabs look is only available inside the Settings
+    /// scene, which we can't use for activation-policy reasons.
+    private var tabBar: some View {
+        HStack(spacing: 2) {
+            ForEach(PrefTab.allCases) { tab in
+                tabButton(for: tab)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+    }
+
+    private func tabButton(for tab: PrefTab) -> some View {
+        let isSelected = selection == tab
+        return Button {
+            selection = tab
+        } label: {
+            VStack(spacing: 2) {
+                Image(systemName: tab.systemImage)
+                    .font(.system(size: 18, weight: .regular))
+                Text(tab.label)
+                    .font(.system(size: 11))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 4)
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isSelected ? Color.accentColor.opacity(0.18) : .clear)
+            )
+            .foregroundStyle(isSelected ? Color.accentColor : .primary)
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Tab content
+
+    @ViewBuilder
+    private var tabContent: some View {
+        switch selection {
+        case .general:     GeneralTab(preferences: preferences, appState: appState)
+        case .behaviour:   BehaviourTab(preferences: preferences)
+        case .folders:     FoldersTab(preferences: preferences)
+        case .search:      SearchTab(preferences: preferences)
+        case .appearance:  AppearanceTab(preferences: preferences)
+        case .shortcuts:   ShortcutsTab(preferences: preferences)
+        case .permissions: PermissionsTab(appState: appState)
         }
     }
 }

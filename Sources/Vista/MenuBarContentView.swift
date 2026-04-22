@@ -46,20 +46,32 @@ struct MenuBarContentView: View {
         .keyboardShortcut("q")
     }
 
-    /// Opens the preferences Window scene and forces it to the front.
+    /// Opens the preferences Window scene and forces it to be key.
     ///
-    /// We do two passes: an immediate activate+open, and a short-delayed
-    /// orderFrontRegardless so a freshly-created window that races our
-    /// first pass still gets raised. The delay is small enough to feel
-    /// instant but long enough for SwiftUI to have created the NSWindow.
+    /// Sequence (each step runs on the next runloop tick so the previous
+    /// one's async consequences settle first):
+    ///   1. setActivationPolicy(.regular) + activate — flip agent → regular
+    ///   2. openWindow(id:) — let SwiftUI create the NSWindow
+    ///   3. activate + orderFrontRegardless + makeKeyAndOrderFront —
+    ///      now that the policy change has propagated, the window can
+    ///      genuinely become key and own the menu bar (Cmd+Q quits US,
+    ///      not whatever app was frontmost before).
+    ///
+    /// Skipping the ticks produces a "visible but not key" window: user
+    /// sees the prefs, types Cmd+Q, and macOS quits the previous app.
     private func openPreferencesWindow() {
-        NSApp.activate(ignoringOtherApps: true)
-        openWindow(id: WindowID.preferences)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            NSApp.activate(ignoringOtherApps: true)
-            if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == WindowID.preferences }) {
-                window.orderFrontRegardless()
-                window.makeKeyAndOrderFront(nil)
+        PreferencesActivation.willOpen()
+
+        DispatchQueue.main.async {
+            openWindow(id: WindowID.preferences)
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                NSApp.activate(ignoringOtherApps: true)
+                if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == WindowID.preferences }) {
+                    window.orderFrontRegardless()
+                    window.makeKeyAndOrderFront(nil)
+                    PreferencesActivation.didOpen(window)
+                }
             }
         }
     }
