@@ -4,6 +4,9 @@ import SwiftUI
 import AppKit
 import VistaCore
 
+// Explicit MainActor — touches AppState (MainActor) and drives window
+// management via NSApp. Swift 6.x infers this; 5.10 doesn't.
+@MainActor
 struct MenuBarContentView: View {
     @Bindable var appState: AppState
     // openWindow drives our Window scene. Combined with NSApp.activate

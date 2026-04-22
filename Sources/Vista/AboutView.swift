@@ -7,6 +7,7 @@
 import SwiftUI
 import AppKit
 
+@MainActor
 struct AboutView: View {
     var body: some View {
         VStack(spacing: 16) {

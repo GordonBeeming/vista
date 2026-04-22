@@ -22,6 +22,7 @@ import AppKit
 import Carbon.HIToolbox
 import VistaCore
 
+@MainActor
 struct PanelContentView: View {
     @Bindable var model: SearchViewModel
     let thumbnails: ThumbnailCache
@@ -307,6 +308,7 @@ struct PanelContentView: View {
 
 // MARK: - Result cell
 
+@MainActor
 private struct ResultCell: View {
     let record: ScreenshotRecord
     let isSelected: Bool

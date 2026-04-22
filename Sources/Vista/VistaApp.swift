@@ -8,6 +8,12 @@ import SwiftUI
 import VistaCore
 
 @main
+// Swift 6.x on macOS 26 infers MainActor for App conformances, but the
+// Swift 5.10 toolchain that ships with macos-14 runners does not — which
+// surfaces as "main actor-isolated initializer cannot be called from a
+// synchronous nonisolated context" on `@State private var appState = AppState()`.
+// Explicit annotation pins the actor for both toolchains.
+@MainActor
 struct VistaApp: App {
     // App-wide state lives here so it survives the menu being closed/reopened
     // (MenuBarExtra tears down its view tree between clicks).

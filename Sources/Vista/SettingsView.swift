@@ -43,6 +43,13 @@ private enum PrefTab: String, CaseIterable, Identifiable {
     }
 }
 
+// Every view in this file touches `Preferences` (MainActor-isolated), so
+// pin them all to MainActor explicitly. Swift 6.x infers this for SwiftUI
+// views; Swift 5.10 (the toolchain on macos-14 runners) does not, and the
+// compile fails with "main actor-isolated property cannot be referenced
+// from a non-isolated context" on helpers like `addFolder()` and on
+// computed properties that read `preferences.*`.
+@MainActor
 struct SettingsView: View {
     @Bindable var preferences: Preferences
     let appState: AppState
@@ -135,6 +142,7 @@ struct SettingsView: View {
 
 // MARK: - General
 
+@MainActor
 private struct GeneralTab: View {
     @Bindable var preferences: Preferences
     let appState: AppState
@@ -154,6 +162,7 @@ private struct GeneralTab: View {
 
 // MARK: - Behaviour
 
+@MainActor
 private struct BehaviourTab: View {
     @Bindable var preferences: Preferences
 
@@ -175,6 +184,7 @@ private struct BehaviourTab: View {
 
 // MARK: - Folders
 
+@MainActor
 private struct FoldersTab: View {
     @Bindable var preferences: Preferences
 
@@ -278,6 +288,7 @@ private struct FoldersTab: View {
 
 // MARK: - Search
 
+@MainActor
 private struct SearchTab: View {
     @Bindable var preferences: Preferences
 
@@ -321,6 +332,7 @@ private struct SearchTab: View {
 
 // MARK: - Appearance
 
+@MainActor
 private struct AppearanceTab: View {
     @Bindable var preferences: Preferences
 
@@ -389,6 +401,7 @@ private struct AppearanceTab: View {
 
 // MARK: - Shortcuts
 
+@MainActor
 private struct ShortcutsTab: View {
     @Bindable var preferences: Preferences
 
@@ -419,6 +432,7 @@ private struct ShortcutsTab: View {
 
 // MARK: - Permissions
 
+@MainActor
 private struct PermissionsTab: View {
     let appState: AppState
 
