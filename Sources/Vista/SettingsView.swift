@@ -494,10 +494,20 @@ private struct PermissionsTab: View {
             Spacer()
         }
         .padding(20)
-        .onAppear {
-            automationState = PermissionProbe.automationForSystemEvents()
-            fdaState = PermissionProbe.fullDiskAccess()
+        .onAppear(perform: refreshProbes)
+        // Re-probe when the user comes back to our app. Covers the
+        // common flow where they click "Open Settings", toggle the
+        // permission in System Settings → Privacy, and return here —
+        // without this the chip would stay stale until they switched
+        // away and back to the Permissions tab.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshProbes()
         }
+    }
+
+    private func refreshProbes() {
+        automationState = PermissionProbe.automationForSystemEvents()
+        fdaState = PermissionProbe.fullDiskAccess()
     }
 }
 
@@ -597,7 +607,7 @@ private struct OptionalFullDiskRow: View {
         case .granted:
             return "Full Disk Access is on — vista can index protected locations. You don't need this unless you want to, since folders added via Folders already work via security-scoped bookmarks."
         case .denied, .notDetermined, .unknown:
-            return "Not required. Folders you add with the Folders tab work via security-scoped bookmarks without any system-wide grant. Enable Full Disk Access only if you want vista to index protected locations it otherwise can't read."
+            return "Not required. Folders you add with the Folders tab work via security-scoped bookmarks without any system-wide grant. Enable Full Disk Access only if you want Vista to index protected locations it otherwise can't read."
         }
     }
 }

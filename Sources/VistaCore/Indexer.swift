@@ -143,7 +143,7 @@ public actor Indexer {
             let exists = fm.fileExists(atPath: root.path, isDirectory: &isDir)
             VistaLog.log("  \(root.path) exists=\(exists) isDir=\(isDir.boolValue)")
             guard exists, isDir.boolValue else {
-                VistaLog.log("  skipping — not a readable directory")
+                VistaLog.log("  skipping — path does not exist or is not a directory")
                 continue
             }
 

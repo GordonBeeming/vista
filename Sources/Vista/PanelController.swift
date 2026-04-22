@@ -76,14 +76,27 @@ public final class PanelController {
     /// System Events — the first invocation triggers the macOS prompt,
     /// which also registers vista in the System Settings → Privacy →
     /// Automation list so the toggle is usable thereafter.
+    ///
+    /// Guards on a non-nil `previousFrontmostApp`: if we never captured
+    /// a target (e.g. panel was opened from the menu bar and no other
+    /// app was frontmost), firing the Cmd+V anyway would paste into
+    /// whichever app bubbled up to frontmost after the panel hid —
+    /// often vista itself, or the user's Finder. Skipping is safer; the
+    /// clipboard copy already happened in ActionHandlers.
     private func pasteToPreviousFrontmost() {
+        guard let target = previousFrontmostApp else {
+            panel?.orderOut(nil)
+            return
+        }
         panel?.orderOut(nil)
-        let target = previousFrontmostApp
         // Activate after panel hides. A short delay gives AppKit time to
         // process the orderOut before we ask another app to take focus;
         // without it the frontmost-change can be dropped on the floor.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            target?.activate()
+            // No-arg `activate()` is macOS 14+, which matches our deployment
+            // target; the options-based variant is deprecated on 14+ and
+            // `.activateIgnoringOtherApps` is itself a no-op there.
+            target.activate()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 Self.sendPasteKeystroke()
             }

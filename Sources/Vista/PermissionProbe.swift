@@ -12,6 +12,12 @@
 
 import Foundation
 import AppKit
+// AEAddressDesc, AECreateDesc, AEDeterminePermissionToAutomateTarget,
+// typeApplicationBundleID etc. live in the AE.h header which is part
+// of CoreServices. AppKit re-exports transitively on current macOS but
+// the explicit import keeps this resolving on older SDKs where that
+// re-export hasn't always been reliable.
+import CoreServices
 
 enum PermissionProbe {
 
