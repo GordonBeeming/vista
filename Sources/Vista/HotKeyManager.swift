@@ -28,6 +28,42 @@ public struct HotKeyChord: Equatable, Sendable, Codable {
         keyCode: UInt32(kVK_ANSI_S),
         modifiers: UInt32(cmdKey | shiftKey)
     )
+
+    /// Translates a Carbon virtual keycode to its display character via
+    /// the active keyboard layout. Shared between the preferences
+    /// recorder (which uppercases for the "⌃⌥⇧⌘S" badge) and the menu-
+    /// bar shortcut mapper (which lowercases for SwiftUI's
+    /// `KeyEquivalent`). Case is left to the caller so each surface keeps
+    /// its own rendering contract. Returns nil for keycodes the active
+    /// layout can't render (dead keys with no visible form, etc.).
+    public static func layoutCharacter(for keyCode: UInt32) -> String? {
+        guard let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue() else { return nil }
+        guard let layoutData = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else {
+            return nil
+        }
+        let data = Unmanaged<CFData>.fromOpaque(layoutData).takeUnretainedValue() as Data
+        return data.withUnsafeBytes { raw -> String? in
+            guard let ptr = raw.bindMemory(to: UCKeyboardLayout.self).baseAddress else { return nil }
+            var deadKeyState: UInt32 = 0
+            var chars: [UniChar] = Array(repeating: 0, count: 4)
+            var length = 0
+            let status = UCKeyTranslate(
+                ptr,
+                UInt16(keyCode),
+                UInt16(kUCKeyActionDisplay),
+                0,
+                UInt32(LMGetKbdType()),
+                OptionBits(kUCKeyTranslateNoDeadKeysBit),
+                &deadKeyState,
+                chars.count,
+                &length,
+                &chars
+            )
+            guard status == noErr, length > 0 else { return nil }
+            let result = String(utf16CodeUnits: chars, count: length)
+            return result.isEmpty ? nil : result
+        }
+    }
 }
 
 @MainActor
