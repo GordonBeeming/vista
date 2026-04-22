@@ -47,9 +47,12 @@ enum BuildInfo {
     }
 
     /// "v0.1 · abc1234" or "v0.1" or "dev · abc1234" — whichever info is
-    /// available. Tight string designed for the footer.
+    /// available. Tight string designed for the footer. The "v" prefix
+    /// is only applied when the version actually looks like a semver, so
+    /// a literal "dev" doesn't render as "vdev".
     static var footerBadge: String {
-        var parts: [String] = ["v\(version)"]
+        let looksLikeSemver = version.first?.isNumber == true
+        var parts: [String] = [looksLikeSemver ? "v\(version)" : version]
         if !commit.isEmpty, commit != "unknown" {
             parts.append(commit)
         }
