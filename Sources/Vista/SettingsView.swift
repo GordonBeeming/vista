@@ -448,6 +448,7 @@ private struct PermissionsTab: View {
     /// Refreshed on appear and whenever the user grants / opens settings.
     /// Kept in state so the green/grey chip updates without a relaunch.
     @State private var automationState: PermissionProbe.State = .unknown
+    @State private var fdaState: PermissionProbe.State = .unknown
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -459,10 +460,10 @@ private struct PermissionsTab: View {
             AutomationRow(
                 state: automationState,
                 onGrant: {
-                    // Fires a no-op Apple Event at System Events with
-                    // user consent enabled — triggers the macOS prompt
-                    // and registers vista in Privacy → Automation so
-                    // you can toggle it there thereafter.
+                    // NSAppleScript path — definitely triggers the
+                    // macOS Automation prompt (and registers vista in
+                    // Privacy → Automation). Re-reads the state after
+                    // the user responds.
                     automationState = PermissionProbe.requestAutomationForSystemEvents()
                 },
                 onOpenSettings: {
@@ -472,7 +473,14 @@ private struct PermissionsTab: View {
                 }
             )
 
-            OptionalFullDiskRow()
+            OptionalFullDiskRow(
+                state: fdaState,
+                onOpenSettings: {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+            )
 
             Divider()
             HStack {
@@ -488,6 +496,7 @@ private struct PermissionsTab: View {
         .padding(20)
         .onAppear {
             automationState = PermissionProbe.automationForSystemEvents()
+            fdaState = PermissionProbe.fullDiskAccess()
         }
     }
 }
@@ -546,34 +555,49 @@ private struct AutomationRow: View {
 }
 
 private struct OptionalFullDiskRow: View {
+    let state: PermissionProbe.State
+    let onOpenSettings: () -> Void
+
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "externaldrive.badge.checkmark")
-                .foregroundStyle(.secondary)
+            Image(systemName: state == .granted ? "checkmark.circle.fill" : "externaldrive.badge.checkmark")
+                .foregroundStyle(state == .granted ? .green : .secondary)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Text("Full Disk Access").bold()
-                    Text("Optional")
+                    Text(badge)
                         .font(.caption)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(Color(nsColor: .separatorColor).opacity(0.4))
                         .clipShape(Capsule())
                 }
-                Text("Not required. Folders you add with the Folders tab work via security-scoped bookmarks without any system-wide grant. Enable Full Disk Access only if you want vista to index protected locations it otherwise can't read.")
+                Text(hint)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
-            Button("Open Settings") {
-                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
-                    NSWorkspace.shared.open(url)
-                }
-            }
+            Button("Open Settings", action: onOpenSettings)
         }
         .padding(10)
         .background(Color(nsColor: .textBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private var badge: String {
+        switch state {
+        case .granted: return "Granted · Optional"
+        case .denied, .notDetermined, .unknown: return "Optional"
+        }
+    }
+
+    private var hint: String {
+        switch state {
+        case .granted:
+            return "Full Disk Access is on — vista can index protected locations. You don't need this unless you want to, since folders added via Folders already work via security-scoped bookmarks."
+        case .denied, .notDetermined, .unknown:
+            return "Not required. Folders you add with the Folders tab work via security-scoped bookmarks without any system-wide grant. Enable Full Disk Access only if you want vista to index protected locations it otherwise can't read."
+        }
     }
 }
