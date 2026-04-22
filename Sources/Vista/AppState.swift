@@ -38,6 +38,13 @@ final class AppState {
     private let hotKey = HotKeyManager()
 
     init() {
+        // Prime TCC with a cheap read-attempt at a Full Disk Access-
+        // gated path before anything else runs. This makes vista show
+        // up in System Settings → Privacy & Security → Full Disk Access
+        // on first launch, so users can toggle it on from the normal
+        // list instead of having to "+" browse to the app bundle.
+        TCCBootstrap.registerWithTCC()
+
         Task { await bootstrap() }
     }
 
