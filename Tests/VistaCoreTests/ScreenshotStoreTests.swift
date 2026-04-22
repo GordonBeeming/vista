@@ -134,6 +134,26 @@ final class ScreenshotStoreTests: XCTestCase {
         XCTAssertNil(try store.fingerprint(for: Self.sampleURL(name: "never-seen.png")))
     }
 
+    // Regression: exact `Date == Date` after a round-trip through the REAL
+    // `mtime` column used to fail sporadically because a Double ULP at
+    // 2026 timestamps (~400 ns) falls below APFS's ns-resolution mtime.
+    // The store now applies a 1 ms tolerance via `isAlreadyIndexed`, so
+    // high-precision fractional mtimes survive the round-trip.
+    func testIsAlreadyIndexedSurvivesDoublePrecisionRoundTrip() throws {
+        let path = Self.sampleURL(name: "Drift.png")
+        // Fractional seconds chosen so `.timeIntervalSince1970` can't be
+        // represented exactly as a Double — that's the shape filesystem
+        // mtimes actually have on APFS.
+        let mtime = Date(timeIntervalSince1970: 1_776_864_366.2835145)
+        let size: Int64 = 42_630
+        try store.upsert(Self.sampleRecord(path: path, mtime: mtime, size: size, text: ""))
+
+        XCTAssertTrue(try store.isAlreadyIndexed(at: path, mtime: mtime, size: size))
+        XCTAssertFalse(try store.isAlreadyIndexed(at: path, mtime: mtime, size: size + 1))
+        XCTAssertFalse(try store.isAlreadyIndexed(at: Self.sampleURL(name: "nope.png"),
+                                                  mtime: mtime, size: size))
+    }
+
     // MARK: - Helpers
 
     private static func sampleURL(name: String) -> URL {

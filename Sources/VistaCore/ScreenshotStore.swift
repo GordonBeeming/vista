@@ -148,6 +148,23 @@ public final class ScreenshotStore: @unchecked Sendable {
 
     // MARK: - Lookups used during incremental scan
 
+    /// Whether the DB already holds an entry for `url` matching the given
+    /// `(mtime, size)`. Mtime is compared with a 1 ms tolerance to survive
+    /// the `Double` round-trip through SQLite's REAL column: at year-2026
+    /// timestamps (~1.78e9 s) one Double ULP is ~400 ns, which is below
+    /// APFS's ns-resolution mtime, so exact equality sporadically fails
+    /// and the indexer used to re-OCR a random ~37% subset of rows on
+    /// every relaunch. `size` is still compared exactly — a real edit
+    /// almost always changes size, so the tolerance on mtime doesn't
+    /// mask genuine changes.
+    public func isAlreadyIndexed(at url: URL, mtime: Date, size: Int64) throws -> Bool {
+        guard let existing = try fingerprint(for: url) else { return false }
+        guard existing.size == size else { return false }
+        let drift = abs(existing.mtime.timeIntervalSinceReferenceDate
+                      - mtime.timeIntervalSinceReferenceDate)
+        return drift < 0.001
+    }
+
     /// Returns the (mtime, size) we last indexed for this path, or nil if
     /// unknown. Indexer uses this to skip unchanged files without reading
     /// pixels.
