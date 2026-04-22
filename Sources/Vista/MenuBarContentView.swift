@@ -1,10 +1,17 @@
 // MenuBarContentView.swift — The dropdown shown when the menu bar icon is clicked.
 
 import SwiftUI
+import AppKit
 import VistaCore
 
 struct MenuBarContentView: View {
     @Bindable var appState: AppState
+    // `openSettings` is the macOS 14+ environment value that drives the
+    // Settings scene. Unlike SettingsLink it's a plain closure, which
+    // lets us activate the app first so the window reliably comes to
+    // front — agent apps (LSUIElement=YES) otherwise often open their
+    // Settings window behind whichever app is already frontmost.
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         Text(statusLine)
@@ -28,11 +35,11 @@ struct MenuBarContentView: View {
 
         Divider()
 
-        // SettingsLink is the blessed way to open the app's Settings scene
-        // from a MenuBarExtra — it handles focus, window creation, and the
-        // standard ⌘, binding without any AppKit glue on our side.
-        SettingsLink {
-            Text("Preferences…")
+        Button("Preferences…") {
+            // Activate before opening so the window isn't buried under
+            // whichever app was frontmost when the menu was clicked.
+            NSApp.activate(ignoringOtherApps: true)
+            openSettings()
         }
         .keyboardShortcut(",", modifiers: .command)
 

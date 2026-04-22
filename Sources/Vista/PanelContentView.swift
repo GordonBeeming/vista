@@ -75,7 +75,7 @@ struct PanelContentView: View {
                 .font(.headline)
                 .foregroundStyle(.secondary)
             if model.queryText.isEmpty {
-                Text("Drop a screenshot onto your Desktop — vista will pick it up in a few seconds.")
+                Text(emptyStateHint)
                     .font(.subheadline)
                     .foregroundStyle(.tertiary)
                     .multilineTextAlignment(.center)
@@ -83,6 +83,21 @@ struct PanelContentView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Hint text for the empty state. Picks the most relevant folder to
+    /// name — a user-added folder if one exists, otherwise the system
+    /// default if it's being watched, otherwise tells the user to add one.
+    private var emptyStateHint: String {
+        if let firstUserFolder = preferences.watchedFolders.first {
+            let name = (firstUserFolder.displayPath as NSString).lastPathComponent
+            return "Drop a screenshot into \(name) — vista will pick it up in a few seconds."
+        }
+        if preferences.watchDefaultFolder {
+            let name = VistaPaths.defaultScreenshotFolder().lastPathComponent
+            return "Drop a screenshot into \(name) — vista will pick it up in a few seconds."
+        }
+        return "No folders are being watched. Open Preferences → Folders to add one."
     }
 
     private var resultsGrid: some View {
