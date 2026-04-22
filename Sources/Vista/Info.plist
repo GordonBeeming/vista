@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Vista</string>
+    <key>CFBundleDisplayName</key>
+    <string>Vista</string>
+    <key>CFBundleExecutable</key>
+    <string>Vista</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.gordonbeeming.vista</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <!-- LSUIElement = YES makes Vista a menu-bar-only app: no Dock icon, no
+         entry in the Force Quit list. The floating panel still appears
+         because we create it as an NSPanel explicitly. -->
+    <key>LSUIElement</key>
+    <true/>
+    <!-- Why Vista needs read access to arbitrary folders: the user-added
+         search scope folders + the default screencapture folder. Shown in
+         the permissions prompt the first time a folder is added. -->
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>Vista indexes screenshots saved to your Desktop so you can search them by text.</string>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>Vista indexes screenshots saved in your Documents folder so you can search them by text.</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>Vista indexes screenshots saved in your Downloads folder so you can search them by text.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Vista uses Apple Events to paste a selected screenshot into the front application.</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © 2026 Gordon Beeming. MIT License.</string>
+</dict>
+</plist>
