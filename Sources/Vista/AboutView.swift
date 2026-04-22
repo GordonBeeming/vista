@@ -59,12 +59,6 @@ struct AboutView: View {
                     subtitle: "gordonbeeming.com",
                     url: "https://gordonbeeming.com"
                 )
-                linkRow(
-                    icon: "text.bubble",
-                    label: "Blog",
-                    subtitle: "blog.gordonbeeming.com",
-                    url: "https://blog.gordonbeeming.com"
-                )
             }
             .padding(.horizontal, 24)
 
