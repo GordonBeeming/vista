@@ -128,6 +128,7 @@ public final class Preferences {
         static let includeAllMedia = "vista.includeAllMedia"
         static let storageDuration = "vista.storageDuration"
         static let launchAtLogin = "vista.launchAtLogin"
+        static let watchDefaultFolder = "vista.watchDefaultFolder"
     }
 
     private let defaults: UserDefaults
@@ -200,6 +201,17 @@ public final class Preferences {
         }
     }
 
+    /// Whether to include the macOS system screenshot folder in the watch
+    /// list. Some users (like anyone whose screenshots go to iCloud Drive
+    /// via Cmd+Shift+5 "Save to") don't actually want the OS default
+    /// watched — it's usually ~/Desktop and holds unrelated files.
+    public var watchDefaultFolder: Bool {
+        didSet {
+            defaults.set(watchDefaultFolder, forKey: Key.watchDefaultFolder)
+            emitChange(.folders)
+        }
+    }
+
     // MARK: - Watched folders (bookmark-backed)
 
     /// Folders the indexer will watch. Mutated through the add/remove
@@ -208,11 +220,14 @@ public final class Preferences {
 
     private let bookmarksURL: URL
 
-    /// Resolves the default (system screenshot location) folder, plus
-    /// every user-added folder, in order. Starts security-scoped access
-    /// on each bookmarked URL.
+    /// Resolves the system-default folder (if enabled) plus every
+    /// user-added folder. Starts security-scoped access on each
+    /// bookmarked URL.
     public func resolvedFolders() -> [URL] {
-        var out: [URL] = [VistaPaths.defaultScreenshotFolder()]
+        var out: [URL] = []
+        if watchDefaultFolder {
+            out.append(VistaPaths.defaultScreenshotFolder())
+        }
         for folder in watchedFolders {
             if let url = folder.resolve(startAccess: true) {
                 // Avoid duplicate default-folder entries if the user
@@ -313,6 +328,10 @@ public final class Preferences {
         self.storageDuration = StorageDuration(rawValue: durationRaw) ?? .unlimited
 
         self.launchAtLogin = defaults.object(forKey: Key.launchAtLogin) as? Bool ?? false
+
+        // Default to ON — matches Raycast behaviour and means fresh installs
+        // "just work" without requiring a folder to be added first.
+        self.watchDefaultFolder = defaults.object(forKey: Key.watchDefaultFolder) as? Bool ?? true
 
         // Watched folders live in a JSON file so we can store bookmark
         // data cleanly. Application Support is the right location —

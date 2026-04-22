@@ -94,10 +94,17 @@ private struct FoldersTab: View {
                 .foregroundStyle(.secondary)
 
             HStack {
+                Toggle(isOn: $preferences.watchDefaultFolder) {
+                    EmptyView()
+                }
+                .toggleStyle(.checkbox)
+                .labelsHidden()
+
                 Image(systemName: "folder.fill.badge.gearshape")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(preferences.watchDefaultFolder ? .secondary : .tertiary)
                 VStack(alignment: .leading) {
                     Text("Default screenshot folder")
+                        .foregroundStyle(preferences.watchDefaultFolder ? .primary : .tertiary)
                     Text(VistaPaths.defaultScreenshotFolder().path)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -105,7 +112,7 @@ private struct FoldersTab: View {
                         .truncationMode(.head)
                 }
                 Spacer()
-                Text("System")
+                Text(preferences.watchDefaultFolder ? "Watching" : "Excluded")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
@@ -271,9 +278,13 @@ private struct ShortcutsTab: View {
             LabeledContent("Invoke hotkey") {
                 KeyRecorderView(chord: $preferences.hotKey)
             }
-            Text("Click and press any modifier+key combination to rebind. ⎋ cancels, ⌫ clears.")
+            Text("Click, then press any chord — including Hyper (⌃⌥⇧⌘). ⎋ cancels, ⌫ clears.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            Text("If a chord doesn't register, another tool (Karabiner, BetterTouchTool, Raycast) may have claimed it first. Unbind it there or pick a different chord.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
 
             HStack {
                 Spacer()

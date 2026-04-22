@@ -1,15 +1,18 @@
 // KeyRecorderView.swift — Click-to-record chord UI.
 //
-// When focused, the field installs a local NSEvent monitor and captures
-// the next modifier+key combination. The captured chord is written back
-// through the `@Binding`; any downstream observer (HotKeyManager) picks
-// it up and re-registers.
+// While recording, the field installs a local NSEvent monitor for both
+// keyDown and flagsChanged. flagsChanged gives us the current modifier
+// mask so the UI can render "⌃⌥⇧⌘…" live as a Hyper key is held down —
+// without that live echo, users hitting a Hyper mapping have no way to
+// tell whether the key is registering at all.
 //
-// Design choices:
-//   - Escape cancels recording (keeps old value).
-//   - Delete / backspace while focused clears the chord.
-//   - We only accept chords that include at least one modifier — a bare
-//     letter key would fight every text field in the OS.
+// The final chord is captured on the first keyDown whose keyCode isn't a
+// modifier itself. Escape cancels, Delete clears.
+//
+// Note on Hyper keys: if an upstream tool (Karabiner, BetterTouchTool,
+// Raycast) has already claimed the same chord as a trigger, macOS will
+// route it there before NSEvent sees it — the recorder will appear
+// unresponsive. Unbind it in the other tool or pick a different chord.
 
 import SwiftUI
 import AppKit
@@ -20,6 +23,9 @@ struct KeyRecorderView: View {
 
     @State private var isRecording = false
     @State private var monitor: Any?
+    // Live modifier mask while recording — drives the "⌃⌥⇧⌘" echo so the
+    // user can see their Hyper key is actually reaching the app.
+    @State private var liveMods: UInt32 = 0
 
     var body: some View {
         Button {
@@ -30,7 +36,7 @@ struct KeyRecorderView: View {
             }
         } label: {
             HStack {
-                Text(isRecording ? "Press a key…" : Self.describe(chord))
+                Text(displayText)
                     .monospaced()
                 Spacer()
                 if isRecording {
@@ -55,14 +61,25 @@ struct KeyRecorderView: View {
         .onDisappear { stopRecording() }
     }
 
+    /// What to show in the button. Prefers a live echo while recording so
+    /// the user sees their modifiers being held; otherwise shows the
+    /// currently-saved chord.
+    private var displayText: String {
+        if isRecording {
+            if liveMods != 0 {
+                return Self.describe(HotKeyChord(keyCode: 0, modifiers: liveMods)) + "…"
+            }
+            return "Press a key…"
+        }
+        return Self.describe(chord)
+    }
+
     // MARK: - Recording
 
     private func startRecording() {
         isRecording = true
-        // Local monitor returns the event when we don't want the system
-        // to consume it; returning nil swallows the keypress so no text
-        // field catches it while we're recording.
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+        liveMods = 0
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
             handle(event: event)
             return nil
         }
@@ -70,6 +87,7 @@ struct KeyRecorderView: View {
 
     private func stopRecording() {
         isRecording = false
+        liveMods = 0
         if let monitor {
             NSEvent.removeMonitor(monitor)
             self.monitor = nil
@@ -77,35 +95,36 @@ struct KeyRecorderView: View {
     }
 
     private func handle(event: NSEvent) {
-        // Esc cancels — keep existing chord.
-        if event.keyCode == UInt16(kVK_Escape) {
+        if event.type == .flagsChanged {
+            liveMods = UInt32(Self.carbonModifiers(from: event.modifierFlags))
+            return
+        }
+
+        // keyDown from here on.
+        if event.keyCode == UInt16(kVK_Escape), Self.carbonModifiers(from: event.modifierFlags) == 0 {
             stopRecording()
             return
         }
-        // Delete / backspace clears to a sentinel "no chord" (keyCode 0
-        // with no modifiers). We don't currently expose an "unbind" toggle
-        // separately, so this doubles as the way to disable the hotkey.
         if event.keyCode == UInt16(kVK_Delete) || event.keyCode == UInt16(kVK_ForwardDelete) {
             chord = HotKeyChord(keyCode: 0, modifiers: 0)
             stopRecording()
             return
         }
-
-        let carbonMods = Self.carbonModifiers(from: event.modifierFlags)
-        guard carbonMods != 0 else {
-            // Bare letter key — ignore and keep listening. Hotkeys without
-            // modifiers would clash with basic typing.
+        // Skip pure-modifier keyDowns (shouldn't normally happen, but some
+        // rewriters emit them). Wait for a "real" key press.
+        if Self.isPureModifier(keyCode: event.keyCode) {
             return
         }
 
-        chord = HotKeyChord(keyCode: UInt32(event.keyCode), modifiers: UInt32(carbonMods))
+        let carbonMods = UInt32(Self.carbonModifiers(from: event.modifierFlags))
+        chord = HotKeyChord(keyCode: UInt32(event.keyCode), modifiers: carbonMods)
         stopRecording()
     }
 
     // MARK: - Display
 
-    /// Renders a chord like `⌘⇧S` or `⌥Space`. Uses the standard macOS
-    /// glyphs in a single font run so width stays predictable.
+    /// Renders a chord like `⌃⌥⇧⌘S` (Hyper+S). Uses macOS standard glyphs
+    /// in a single font run so the width stays predictable.
     static func describe(_ chord: HotKeyChord) -> String {
         if chord.keyCode == 0, chord.modifiers == 0 {
             return "Click to record"
@@ -115,8 +134,10 @@ struct KeyRecorderView: View {
         if chord.modifiers & UInt32(optionKey) != 0  { out += "⌥" }
         if chord.modifiers & UInt32(shiftKey) != 0   { out += "⇧" }
         if chord.modifiers & UInt32(cmdKey) != 0     { out += "⌘" }
-        out += Self.keyName(for: chord.keyCode)
-        return out
+        if chord.keyCode != 0 {
+            out += Self.keyName(for: chord.keyCode)
+        }
+        return out.isEmpty ? "Click to record" : out
     }
 
     private static func keyName(for keyCode: UInt32) -> String {
@@ -129,24 +150,43 @@ struct KeyRecorderView: View {
         case kVK_RightArrow: return "→"
         case kVK_UpArrow:    return "↑"
         case kVK_DownArrow:  return "↓"
-        case kVK_F1:         return "F1"
-        case kVK_F2:         return "F2"
-        case kVK_F3:         return "F3"
-        case kVK_F4:         return "F4"
-        case kVK_F5:         return "F5"
-        case kVK_F6:         return "F6"
-        case kVK_F7:         return "F7"
-        case kVK_F8:         return "F8"
-        case kVK_F9:         return "F9"
-        case kVK_F10:        return "F10"
-        case kVK_F11:        return "F11"
-        case kVK_F12:        return "F12"
+        case kVK_F1:  return "F1"
+        case kVK_F2:  return "F2"
+        case kVK_F3:  return "F3"
+        case kVK_F4:  return "F4"
+        case kVK_F5:  return "F5"
+        case kVK_F6:  return "F6"
+        case kVK_F7:  return "F7"
+        case kVK_F8:  return "F8"
+        case kVK_F9:  return "F9"
+        case kVK_F10: return "F10"
+        case kVK_F11: return "F11"
+        case kVK_F12: return "F12"
+        case kVK_F13: return "F13"
+        case kVK_F14: return "F14"
+        case kVK_F15: return "F15"
+        case kVK_F16: return "F16"
+        case kVK_F17: return "F17"
+        case kVK_F18: return "F18"
+        case kVK_F19: return "F19"
+        case kVK_F20: return "F20"
         default:
-            // Ask the current keyboard layout to translate the keyCode
-            // into a Unicode character. This respects non-QWERTY layouts
-            // (Dvorak, AZERTY, etc.) and produces the right label for
-            // the user's physical keys.
             return layoutKeyName(for: keyCode) ?? "Key\(keyCode)"
+        }
+    }
+
+    /// Pure modifier keys emit keyDowns on some rewriters; filter them so
+    /// the recorder waits for a real chord termination.
+    private static func isPureModifier(keyCode: UInt16) -> Bool {
+        switch Int(keyCode) {
+        case kVK_Shift, kVK_RightShift,
+             kVK_Control, kVK_RightControl,
+             kVK_Option, kVK_RightOption,
+             kVK_Command, kVK_RightCommand,
+             kVK_CapsLock, kVK_Function:
+            return true
+        default:
+            return false
         }
     }
 
@@ -179,14 +219,17 @@ struct KeyRecorderView: View {
         }
     }
 
-    /// NSEvent's Cocoa modifier flags need translating to Carbon's flag
-    /// constants to round-trip through RegisterEventHotKey.
+    /// Translate Cocoa's modifier flags into Carbon's bitmask.
+    /// `deviceIndependentFlagsMask` strips device-specific bits (capsLock
+    /// position, numpad state) that we don't care about, which prevents a
+    /// stuck Caps Lock from polluting the stored chord.
     private static func carbonModifiers(from flags: NSEvent.ModifierFlags) -> Int {
+        let masked = flags.intersection(.deviceIndependentFlagsMask)
         var out = 0
-        if flags.contains(.command)  { out |= cmdKey }
-        if flags.contains(.shift)    { out |= shiftKey }
-        if flags.contains(.option)   { out |= optionKey }
-        if flags.contains(.control)  { out |= controlKey }
+        if masked.contains(.command)  { out |= cmdKey }
+        if masked.contains(.shift)    { out |= shiftKey }
+        if masked.contains(.option)   { out |= optionKey }
+        if masked.contains(.control)  { out |= controlKey }
         return out
     }
 }
