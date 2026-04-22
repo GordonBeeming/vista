@@ -39,14 +39,23 @@ BUNDLE_ID="com.gordonbeeming.vista"
 APP="${PROJECT_ROOT}/Distribution/Vista.app"
 LOG="${HOME}/Library/Logs/Vista/vista.log"
 
-# --- Kill any running instance (brew-installed or previous dev) ---------------
-# Both live at the same bundle id; running two simultaneously would fight over
+# --- Kill any running instance (brew-installed or any previous dev) ----------
+# Both the current executable name (`Vista`) and the legacy one from earlier
+# dev-run.sh versions (`VistaDev`) need to go — they're different executables
+# but share the com.gordonbeeming.vista* bundle id family and would fight over
 # UserDefaults, the hotkey, and the menu bar icon. Silent fail if nothing's
 # running.
-pkill -x "${EXECUTABLE}" 2>/dev/null || true
+pkill -x "Vista" 2>/dev/null || true
+pkill -x "VistaDev" 2>/dev/null || true
 # Give launchd a moment to tear down before we `open` the new one —
 # otherwise macOS may foreground the dying process instead of launching ours.
 sleep 0.5
+
+# --- Clean up the legacy dev bundle ------------------------------------------
+# Previous versions of this script produced Distribution/Vista Dev.app with a
+# different bundle id (com.gordonbeeming.vista.dev). It's no longer used; left
+# on disk it confuses Launch Services and shows up as a stale app in Spotlight.
+rm -rf "${PROJECT_ROOT}/Distribution/Vista Dev.app"
 
 # --- Debug build --------------------------------------------------------------
 echo "🔨 Building Vista (debug)..."
