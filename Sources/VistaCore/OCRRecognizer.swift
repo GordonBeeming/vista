@@ -59,16 +59,29 @@ public final class OCRRecognizer: Sendable {
         guard level != .off else { return "" }
 
         return try await withCheckedThrowingContinuation { continuation in
+            // Two code paths can signal a result here:
+            //   1. The VNRecognizeTextRequest completion handler (normal
+            //      success/error).
+            //   2. The `handler.perform([request])` call throwing.
+            //
+            // In nearly all cases exactly one fires, but Vision has been
+            // observed to surface both paths under rare timing conditions —
+            // completion fires with an error AND perform() throws — which
+            // double-resumes the checked continuation and crashes the app
+            // with an assertion failure (seen at ~2.7k files into a scan).
+            // A thread-safe one-shot gate guarantees we only resume once.
+            let gate = ContinuationGate(continuation)
+
             let request = VNRecognizeTextRequest { request, error in
                 if let error = error {
-                    continuation.resume(throwing: error)
+                    gate.resume(throwing: error)
                     return
                 }
                 let observations = (request.results as? [VNRecognizedTextObservation]) ?? []
                 // `topCandidates(1)` returns up to one best-guess per
                 // recognised line; Vision already filters confidence.
                 let lines = observations.compactMap { $0.topCandidates(1).first?.string }
-                continuation.resume(returning: lines.joined(separator: "\n"))
+                gate.resume(returning: lines.joined(separator: "\n"))
             }
 
             request.recognitionLevel = level == .accurate ? .accurate : .fast
@@ -84,9 +97,40 @@ public final class OCRRecognizer: Sendable {
                 do {
                     try handler.perform([request])
                 } catch {
-                    continuation.resume(throwing: error)
+                    gate.resume(throwing: error)
                 }
             }
+        }
+    }
+
+    /// One-shot gate around a CheckedContinuation. Swift's
+    /// CheckedContinuation enforces single-resume at runtime with an
+    /// assertion; pairing a `VN*Request` completion handler with a
+    /// `perform()` catch block is exactly the shape where a double resume
+    /// can slip through, so we route both through this.
+    private final class ContinuationGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var done = false
+        private let continuation: CheckedContinuation<String, Error>
+
+        init(_ continuation: CheckedContinuation<String, Error>) {
+            self.continuation = continuation
+        }
+
+        func resume(returning value: String) {
+            lock.lock()
+            let firstTime = !done
+            done = true
+            lock.unlock()
+            if firstTime { continuation.resume(returning: value) }
+        }
+
+        func resume(throwing error: Error) {
+            lock.lock()
+            let firstTime = !done
+            done = true
+            lock.unlock()
+            if firstTime { continuation.resume(throwing: error) }
         }
     }
 

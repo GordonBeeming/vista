@@ -16,8 +16,16 @@ public actor Indexer {
     public enum Progress: Sendable, Equatable {
         /// No work running, no recent activity.
         case idle
-        /// Initial scan in progress — `done / total` is a running count.
-        case scanning(done: Int, total: Int)
+        /// Walking watched folders, filtering to already-indexed vs new
+        /// via the mtime+size fingerprint. Fast; there's no meaningful
+        /// progress signal other than "scanning N folders".
+        case enumerating(folders: Int)
+        /// OCR queue. `done` / `total` is new files (files we actually
+        /// need to read + OCR), not all files on disk. A relaunch with
+        /// a fresh DB might show total=4762; the next relaunch with the
+        /// DB populated typically shows total=0 → we skip straight to
+        /// `.watching`.
+        case indexing(done: Int, total: Int)
         /// Live-watching mode. `indexed` is the current total row count
         /// so the UI can render "1,234 screenshots indexed".
         case watching(indexed: Int)
@@ -132,10 +140,12 @@ public actor Indexer {
 
     private func initialScan() async throws {
         let fm = FileManager.default
-        var discovered: [URL] = []
 
         VistaLog.log("initialScan starting with \(watchedFolders.count) folder(s)")
+        progressContinuation?.yield(.enumerating(folders: watchedFolders.count))
 
+        // --- Phase 1: walk each watched folder and collect candidates.
+        var discovered: [URL] = []
         for root in watchedFolders {
             // Probe the folder before enumerating so a permission failure
             // surfaces in the logs instead of silently returning zero.
@@ -183,29 +193,55 @@ public actor Indexer {
 
         VistaLog.log("initialScan discovered \(discovered.count) candidate files across \(watchedFolders.count) folder(s)")
 
-        let total = discovered.count
-        var done = 0
-        progressContinuation?.yield(.scanning(done: 0, total: total))
-
-        // Remove rows for files that have disappeared since last run.
+        // --- Phase 2: drop rows for files that have disappeared since
+        // the last scan. Cheap — one SELECT + one DELETE per stale row.
         let known = try store.pathsOnDisk()
         let discoveredPaths = Set(discovered.map(\.path))
         for stale in known.subtracting(discoveredPaths) {
             try? store.delete(path: URL(fileURLWithPath: stale))
         }
 
+        // --- Phase 3: fingerprint-filter. Anything whose (mtime, size)
+        // matches the DB entry is already indexed; skip without OCR.
+        // This is the "resume" path — on a relaunch with a populated DB,
+        // nearly every file lands here and the expensive Phase 4 queue
+        // ends up empty.
+        var toIndex: [URL] = []
+        toIndex.reserveCapacity(discovered.count / 4)  // rough guess
         for url in discovered {
+            if Task.isCancelled { return }
+            let attrs = try? fm.attributesOfItem(atPath: url.path)
+            let mtime = (attrs?[.modificationDate] as? Date) ?? Date()
+            let size = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+            if let existing = try? store.fingerprint(for: url),
+               existing.mtime == mtime, existing.size == size {
+                continue
+            }
+            toIndex.append(url)
+        }
+
+        VistaLog.log("\(discovered.count - toIndex.count) already indexed, \(toIndex.count) new file(s) to OCR")
+
+        // --- Phase 4: OCR + upsert the genuinely-new files. Progress
+        // reported against this shorter list so the counter reflects
+        // actual work, not fingerprint-check flybys.
+        let total = toIndex.count
+        progressContinuation?.yield(.indexing(done: 0, total: total))
+
+        var done = 0
+        for url in toIndex {
             if Task.isCancelled { break }
             do {
                 try await indexFile(url)
             } catch {
-                NSLog("vista: failed to index \(url.lastPathComponent): \(error)")
+                VistaLog.log("failed to index \(url.lastPathComponent): \(error)")
             }
             done += 1
-            // Throttle the progress stream — one event per 25 files is
-            // plenty to animate a counter without drowning the observer.
-            if done % 25 == 0 || done == total {
-                progressContinuation?.yield(.scanning(done: done, total: total))
+            // One progress event per 5 files keeps the UI lively during
+            // OCR without drowning the observer. Also emit on the last
+            // file so the counter lands exactly at total.
+            if done % 5 == 0 || done == total {
+                progressContinuation?.yield(.indexing(done: done, total: total))
             }
         }
 

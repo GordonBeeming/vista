@@ -22,7 +22,7 @@ final class AppState {
     /// the Permissions tab.
     var indexedCount: Int {
         if case .watching(let n) = indexingProgress { return n }
-        if case .scanning(let done, _) = indexingProgress { return done }
+        if case .indexing(let done, _) = indexingProgress { return done }
         return 0
     }
 

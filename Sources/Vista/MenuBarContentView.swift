@@ -108,8 +108,16 @@ struct MenuBarContentView: View {
         switch appState.indexingProgress {
         case .idle:
             return "Vista — idle"
-        case .scanning(let done, let total):
-            return "Indexing \(done) / \(total)"
+        case .enumerating(let folders):
+            return folders == 1 ? "Scanning folder…" : "Scanning \(folders) folders…"
+        case .indexing(let done, let total):
+            if total == 0 {
+                // Empty queue = fully resumed from the DB, everything
+                // was already indexed. Jump straight to the steady-state
+                // message so the user doesn't see a flash of "0 / 0".
+                return "Up to date"
+            }
+            return "OCR'ing \(done) / \(total) new images"
         case .watching(let indexed):
             return "\(indexed) screenshots indexed"
         }
