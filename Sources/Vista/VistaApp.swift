@@ -30,6 +30,12 @@ struct VistaApp: App {
         }
         .windowResizability(.contentSize)
         .defaultSize(width: 540, height: 460)
+
+        Window("About Vista", id: WindowID.about) {
+            AboutView()
+        }
+        .windowResizability(.contentSize)
+        .defaultSize(width: 420, height: 460)
     }
 }
 
@@ -37,4 +43,5 @@ struct VistaApp: App {
 /// scene registration can't drift out of sync via a typo'd string.
 enum WindowID {
     static let preferences = "vista.preferences"
+    static let about = "vista.about"
 }

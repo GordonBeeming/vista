@@ -38,12 +38,37 @@ struct MenuBarContentView: View {
         }
         .keyboardShortcut(",", modifiers: .command)
 
+        Button("About Vista") {
+            openAboutWindow()
+        }
+
         Divider()
 
         Button("Quit Vista") {
             NSApplication.shared.terminate(nil)
         }
         .keyboardShortcut("q")
+    }
+
+    /// Opens the About window and raises it using the same activation-
+    /// policy flip + find-and-raise pattern as Preferences. Without the
+    /// flip, the window appears behind whichever app was frontmost — the
+    /// classic LSUIElement activation problem.
+    private func openAboutWindow() {
+        PreferencesActivation.willOpen()
+
+        DispatchQueue.main.async {
+            openWindow(id: WindowID.about)
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                NSApp.activate(ignoringOtherApps: true)
+                if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == WindowID.about }) {
+                    window.orderFrontRegardless()
+                    window.makeKeyAndOrderFront(nil)
+                    PreferencesActivation.didOpen(window)
+                }
+            }
+        }
     }
 
     /// Opens the preferences Window scene and forces it to be key.
