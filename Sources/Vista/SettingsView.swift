@@ -235,9 +235,9 @@ private struct AppearanceTab: View {
 
     var body: some View {
         Form {
-            Section {
+            Section("Panel Size") {
                 HStack {
-                    Text("Panel Size")
+                    Text("Window")
                     Spacer()
                     Text("\(Int(preferences.panelSizeFraction * 100))%")
                         .monospaced()
@@ -258,7 +258,35 @@ private struct AppearanceTab: View {
                 }
                 .buttonStyle(.bordered)
 
-                Text("How much of the active screen the search panel takes up when you invoke the hotkey. Bigger panel = bigger thumbnails.")
+                Text("How much of the active screen the search panel takes up when you invoke the hotkey.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Preview Size") {
+                HStack {
+                    Text("Thumbnail")
+                    Spacer()
+                    Text("\(Int(preferences.thumbnailSize)) pt")
+                        .monospaced()
+                        .foregroundStyle(.secondary)
+                }
+                Slider(value: $preferences.thumbnailSize, in: 160...720, step: 20) {
+                    Text("Preview size")
+                } minimumValueLabel: {
+                    Text("S").font(.caption)
+                } maximumValueLabel: {
+                    Text("XL").font(.caption)
+                }
+                HStack(spacing: 8) {
+                    Button("Small")  { preferences.thumbnailSize = 200 }
+                    Button("Medium") { preferences.thumbnailSize = 280 }
+                    Button("Large")  { preferences.thumbnailSize = 420 }
+                    Button("XL")     { preferences.thumbnailSize = 600 }
+                }
+                .buttonStyle(.bordered)
+
+                Text("Target width of each preview in the grid. Bigger previews mean fewer columns — independent of the panel size.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

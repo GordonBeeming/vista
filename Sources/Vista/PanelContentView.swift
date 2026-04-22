@@ -86,18 +86,23 @@ struct PanelContentView: View {
     }
 
     private var resultsGrid: some View {
-        ScrollView {
-            // adaptive grid — columns re-flow when the user resizes the
-            // panel (panel size preference is Phase 3).
+        // Preview-size preference drives both the grid columns (minimum
+        // width per thumb) and the NSImage size we pull from the cache
+        // (so a user asking for 500pt previews gets the 1024-px cached
+        // thumbnail, not an upscaled 512-px one).
+        let target = preferences.thumbnailSize
+        let thumbCacheSize: ThumbnailCache.Size = target > 380 ? .large : target > 180 ? .medium : .small
+        return ScrollView {
             LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 240, maximum: 360), spacing: 16)],
+                columns: [GridItem(.adaptive(minimum: target, maximum: target * 1.6), spacing: 16)],
                 spacing: 16
             ) {
                 ForEach(Array(model.results.enumerated()), id: \.element.id) { index, record in
                     ResultCell(
                         record: record,
                         isSelected: index == model.selectedIndex,
-                        thumbnails: thumbnails
+                        thumbnails: thumbnails,
+                        thumbSize: thumbCacheSize
                     )
                     .onTapGesture {
                         model.selectedIndex = index
@@ -182,6 +187,7 @@ private struct ResultCell: View {
     let record: ScreenshotRecord
     let isSelected: Bool
     let thumbnails: ThumbnailCache
+    let thumbSize: ThumbnailCache.Size
 
     @State private var image: NSImage?
 
@@ -216,11 +222,12 @@ private struct ResultCell: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .task(id: record.id) {
+        .task(id: "\(record.id)-\(thumbSize.rawValue)") {
             // Load in a detached task so scroll-past doesn't block on
-            // thumbnail generation.
-            let loaded = await Task.detached(priority: .userInitiated) { [record] in
-                try? thumbnails.thumbnail(for: record.path, size: .medium, sourceMtime: record.mtime)
+            // thumbnail generation. Re-fires when thumbSize changes so the
+            // preview-size slider takes effect without a reload.
+            let loaded = await Task.detached(priority: .userInitiated) { [record, thumbSize] in
+                try? thumbnails.thumbnail(for: record.path, size: thumbSize, sourceMtime: record.mtime)
             }.value
             self.image = loaded
         }

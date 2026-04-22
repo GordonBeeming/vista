@@ -122,6 +122,7 @@ public final class Preferences {
         static let hotKeyCode = "vista.hotKey.keyCode"
         static let hotKeyModifiers = "vista.hotKey.modifiers"
         static let panelSizeFraction = "vista.panel.sizeFraction"
+        static let thumbnailSize = "vista.panel.thumbnailSize"
         static let ocrLevel = "vista.ocr.level"
         static let ocrLanguages = "vista.ocr.languages"
         static let primaryAction = "vista.primaryAction"
@@ -155,6 +156,23 @@ public final class Preferences {
                 return
             }
             defaults.set(panelSizeFraction, forKey: Key.panelSizeFraction)
+            emitChange(.panelSize)
+        }
+    }
+
+    /// Target width (in points) for each thumbnail in the results grid.
+    /// The grid uses this as the minimum column width; columns may grow
+    /// up to ~1.6× to absorb leftover horizontal space, so bigger values
+    /// mean fewer, larger previews.
+    public var thumbnailSize: Double {
+        didSet {
+            let clamped = min(720, max(160, thumbnailSize))
+            if clamped != thumbnailSize {
+                defaults.set(clamped, forKey: Key.thumbnailSize)
+                DispatchQueue.main.async { [weak self] in self?.thumbnailSize = clamped }
+                return
+            }
+            defaults.set(thumbnailSize, forKey: Key.thumbnailSize)
             emitChange(.panelSize)
         }
     }
@@ -312,6 +330,12 @@ public final class Preferences {
 
         let frac = defaults.object(forKey: Key.panelSizeFraction) as? Double
         self.panelSizeFraction = frac ?? 0.6
+
+        let thumb = defaults.object(forKey: Key.thumbnailSize) as? Double
+        // 280 pt is roughly the Raycast default — big enough that window
+        // text is legible without an eye squint, small enough that you
+        // get four or five columns at Comfortable panel width.
+        self.thumbnailSize = thumb ?? 280
 
         let levelRaw = defaults.string(forKey: Key.ocrLevel) ?? "fast"
         self.ocrLevel = OCRRecognizer.Level(storageRawValue: levelRaw) ?? .fast
