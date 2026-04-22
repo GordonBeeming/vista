@@ -26,11 +26,13 @@ Requires macOS 14 (Sonoma) or later.
 swift build -c release
 ```
 
-Or run directly during development:
+Or run as a real `.app` bundle during development (separate bundle id, so dev permissions don't clobber your brew-installed copy):
 
 ```bash
-swift run Vista
+./Scripts/dev-run.sh
 ```
+
+Launches `Distribution/Vista Dev.app` — menu bar icon, proper Info.plist, isolated TCC grants + preferences. Fast incremental debug rebuilds.
 
 ## License
 
