@@ -1,0 +1,192 @@
+# =============================================================================
+# build.yml — CI/CD pipeline for vista
+#
+# Triggers:
+#   - Push / PR to main → build + test
+#   - Published release → build + test + sign + notarise + DMG + upload + tap update
+#
+# Required secrets (Settings → Secrets and variables → Actions):
+#   DEVELOPER_ID_CERTIFICATE  — base64-encoded .p12 with "Developer ID Application"
+#   DEVELOPER_ID_PASSWORD     — password for the .p12
+#   APPLE_ID                  — Apple Developer account email
+#   APPLE_TEAM_ID             — 10-char Apple Team ID
+#   APPLE_APP_PASSWORD        — app-specific password for notarytool
+#   HOMEBREW_TAP_DEPLOY_KEY   — SSH private key with write access to the tap repo
+# =============================================================================
+
+name: Build and Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  release:
+    types: [published]
+
+jobs:
+  # =============================================================================
+  # Build + Test — runs on every trigger
+  # =============================================================================
+  build-and-test:
+    runs-on: macos-14
+    name: Build & Test
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Print Swift version
+        run: swift --version
+
+      - name: Build all targets
+        run: swift build --build-tests
+
+      - name: Run tests
+        run: swift test --parallel
+
+  # =============================================================================
+  # Release — only on published release events
+  # =============================================================================
+  release:
+    needs: build-and-test
+    if: github.event_name == 'release'
+    runs-on: macos-14
+    name: Sign, Notarise & Release
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build release artifacts
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Strip the patch component if present, e.g. 0.1.0 → 0.1
+          MAJOR_MINOR="$(echo "${VERSION}" | awk -F. '{print $1"."$2}')"
+          chmod +x Scripts/build-release.sh
+          ./Scripts/build-release.sh "${MAJOR_MINOR}" "${{ github.run_number }}.${{ github.run_attempt }}"
+
+      # Import the Developer ID certificate into a fresh keychain so codesign
+      # can find it. Keeping it in a temporary keychain avoids touching
+      # login.keychain on the runner.
+      - name: Import signing certificate
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_PASSWORD }}
+        run: |
+          echo "${CERTIFICATE_BASE64}" | base64 --decode > certificate.p12
+          KEYCHAIN_PATH="${RUNNER_TEMP}/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security default-keychain -s "${KEYCHAIN_PATH}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security import certificate.p12 \
+            -k "${KEYCHAIN_PATH}" \
+            -P "${CERTIFICATE_PASSWORD}" \
+            -T /usr/bin/codesign
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "${KEYCHAIN_PASSWORD}" \
+            "${KEYCHAIN_PATH}"
+          rm certificate.p12
+
+      # --deep signs nested frameworks, --options runtime enables hardened
+      # runtime, --timestamp embeds a trusted timestamp (required for
+      # notarisation), --entitlements threads in the Apple Events capability.
+      - name: Sign application
+        run: |
+          codesign --deep --force \
+            --options runtime \
+            --timestamp \
+            --entitlements Distribution/Vista.entitlements \
+            --sign "Developer ID Application" \
+            Distribution/Vista.app
+
+      - name: Notarise application
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          ditto -c -k --keepParent Distribution/Vista.app Distribution/Vista-notarize.zip
+          xcrun notarytool submit Distribution/Vista-notarize.zip \
+            --apple-id "${APPLE_ID}" \
+            --team-id "${APPLE_TEAM_ID}" \
+            --password "${APPLE_APP_PASSWORD}" \
+            --wait
+          rm Distribution/Vista-notarize.zip
+
+      - name: Staple notarisation ticket
+        run: xcrun stapler staple Distribution/Vista.app
+
+      - name: Create DMG
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          hdiutil create \
+            -volname "Vista" \
+            -srcfolder Distribution/Vista.app \
+            -ov \
+            -format UDZO \
+            "Distribution/Vista-${VERSION}.dmg"
+
+      - name: Upload release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release upload "${GITHUB_REF_NAME}" \
+            "Distribution/Vista-${VERSION}.dmg" \
+            --clobber
+
+      # Push an updated cask to gordonbeeming/homebrew-tap so that
+      # `brew install --cask gordonbeeming/tap/vista` resolves to the new
+      # version. Uses SSH with a deploy key stored as a repo secret.
+      - name: Update Homebrew tap
+        env:
+          HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          DMG_SHA256="$(shasum -a 256 "Distribution/Vista-${VERSION}.dmg" | awk '{print $1}')"
+
+          mkdir -p ~/.ssh
+          echo "${HOMEBREW_TAP_DEPLOY_KEY}" > ~/.ssh/homebrew_tap_key
+          chmod 600 ~/.ssh/homebrew_tap_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/homebrew_tap_key -o StrictHostKeyChecking=no"
+
+          git clone git@github.com:GordonBeeming/homebrew-tap.git /tmp/homebrew-tap
+
+          mkdir -p /tmp/homebrew-tap/Casks
+          cat > /tmp/homebrew-tap/Casks/vista.rb << CASK_EOF
+          cask "vista" do
+            version "${VERSION}"
+            sha256 "${DMG_SHA256}"
+
+            url "https://github.com/gordonbeeming/vista/releases/download/v#{version}/Vista-#{version}.dmg"
+            name "Vista"
+            desc "Search your screenshots by text, name or date — OCR-powered"
+            homepage "https://github.com/gordonbeeming/vista"
+
+            depends_on macos: ">= :sonoma"
+
+            app "Vista.app"
+
+            zap trash: [
+              "~/Library/Application Support/Vista",
+              "~/Library/Caches/com.gordonbeeming.vista",
+              "~/Library/Preferences/com.gordonbeeming.vista.plist",
+            ]
+          end
+          CASK_EOF
+          # Remove the heredoc's 10-space indent.
+          sed -i '' 's/^          //' /tmp/homebrew-tap/Casks/vista.rb
+
+          cd /tmp/homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/vista.rb
+          git commit -m "Update vista to ${VERSION}" || echo "No changes to commit"
+          git push
+
+          rm -f ~/.ssh/homebrew_tap_key
