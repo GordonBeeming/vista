@@ -2,6 +2,7 @@
 
 import SwiftUI
 import AppKit
+import Carbon.HIToolbox
 import VistaCore
 
 // Explicit MainActor — touches AppState (MainActor) and drives window
@@ -22,7 +23,7 @@ struct MenuBarContentView: View {
         Button("Search Screenshots…") {
             appState.openPanel()
         }
-        .keyboardShortcut("s", modifiers: [.command, .shift])
+        .keyboardShortcut(appState.preferences.hotKey.asSwiftUIShortcut)
 
         Divider()
 
@@ -120,6 +121,82 @@ struct MenuBarContentView: View {
             return "OCR'ing \(done) / \(total) new images"
         case .watching(let indexed):
             return "\(indexed) screenshots indexed"
+        }
+    }
+}
+
+extension HotKeyChord {
+    /// Converts this Carbon-backed chord into the SwiftUI shortcut the
+    /// menu item renders. Returns nil (no shortcut shown) when the chord
+    /// is empty or the key doesn't map cleanly to a `KeyEquivalent`, so
+    /// the menu never shows a stale/wrong glyph — the global Carbon
+    /// hotkey still fires regardless.
+    var asSwiftUIShortcut: KeyboardShortcut? {
+        guard keyCode != 0 else { return nil }
+        guard let equivalent = Self.keyEquivalent(for: keyCode) else { return nil }
+
+        // Carbon also vends an `EventModifiers` type, so the SwiftUI one
+        // needs to be fully qualified or the type checker can't pick a
+        // base for `.command` / `.shift` / `.option` / `.control`.
+        var mods: SwiftUI.EventModifiers = []
+        if modifiers & UInt32(cmdKey)     != 0 { mods.insert(.command) }
+        if modifiers & UInt32(shiftKey)   != 0 { mods.insert(.shift) }
+        if modifiers & UInt32(optionKey)  != 0 { mods.insert(.option) }
+        if modifiers & UInt32(controlKey) != 0 { mods.insert(.control) }
+
+        return KeyboardShortcut(equivalent, modifiers: mods)
+    }
+
+    private static func keyEquivalent(for keyCode: UInt32) -> KeyEquivalent? {
+        switch Int(keyCode) {
+        case kVK_Space:         return .space
+        case kVK_Return:        return .return
+        case kVK_Tab:            return .tab
+        case kVK_Escape:         return .escape
+        case kVK_Delete:         return .delete
+        case kVK_ForwardDelete:  return .deleteForward
+        case kVK_LeftArrow:      return .leftArrow
+        case kVK_RightArrow:     return .rightArrow
+        case kVK_UpArrow:        return .upArrow
+        case kVK_DownArrow:      return .downArrow
+        default:
+            // Translate via the active keyboard layout so AZERTY/QWERTZ
+            // users see their own glyph, not a QWERTY guess. Lowercased
+            // because SwiftUI compares case-insensitively and the menu
+            // draws the glyph in its own case regardless.
+            guard let name = layoutCharacter(for: keyCode), let ch = name.first else {
+                return nil
+            }
+            return KeyEquivalent(Character(ch.lowercased()))
+        }
+    }
+
+    private static func layoutCharacter(for keyCode: UInt32) -> String? {
+        guard let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue() else { return nil }
+        guard let layoutData = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else {
+            return nil
+        }
+        let data = Unmanaged<CFData>.fromOpaque(layoutData).takeUnretainedValue() as Data
+        return data.withUnsafeBytes { raw -> String? in
+            guard let ptr = raw.bindMemory(to: UCKeyboardLayout.self).baseAddress else { return nil }
+            var deadKeyState: UInt32 = 0
+            var chars: [UniChar] = Array(repeating: 0, count: 4)
+            var length = 0
+            let status = UCKeyTranslate(
+                ptr,
+                UInt16(keyCode),
+                UInt16(kUCKeyActionDisplay),
+                0,
+                UInt32(LMGetKbdType()),
+                OptionBits(kUCKeyTranslateNoDeadKeysBit),
+                &deadKeyState,
+                chars.count,
+                &length,
+                &chars
+            )
+            guard status == noErr, length > 0 else { return nil }
+            let result = String(utf16CodeUnits: chars, count: length)
+            return result.isEmpty ? nil : result
         }
     }
 }
