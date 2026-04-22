@@ -136,9 +136,11 @@ final class ScreenshotStoreTests: XCTestCase {
 
     // Regression: exact `Date == Date` after a round-trip through the REAL
     // `mtime` column used to fail sporadically because a Double ULP at
-    // 2026 timestamps (~400 ns) falls below APFS's ns-resolution mtime.
-    // The store now applies a 1 ms tolerance via `isAlreadyIndexed`, so
-    // high-precision fractional mtimes survive the round-trip.
+    // 2026 timestamps (~400 ns) is coarser than APFS's 1 ns mtime
+    // resolution — so a `Double` can't represent every distinct APFS
+    // timestamp. `isAlreadyIndexed` applies `ScreenshotStore.mtimeTolerance`
+    // (1 ms) so high-precision fractional mtimes still match after the
+    // round-trip.
     func testIsAlreadyIndexedSurvivesDoublePrecisionRoundTrip() throws {
         let path = Self.sampleURL(name: "Drift.png")
         // Fractional seconds chosen so `.timeIntervalSince1970` can't be
@@ -152,6 +154,13 @@ final class ScreenshotStoreTests: XCTestCase {
         XCTAssertFalse(try store.isAlreadyIndexed(at: path, mtime: mtime, size: size + 1))
         XCTAssertFalse(try store.isAlreadyIndexed(at: Self.sampleURL(name: "nope.png"),
                                                   mtime: mtime, size: size))
+
+        // Drift outside the tolerance window is treated as "changed". The
+        // epsilon (10 × tolerance) is deliberately well beyond the ~400 ns
+        // Double-round-trip slop so the assertion is deterministic across
+        // fractional mtime values.
+        let beyondTol = mtime.addingTimeInterval(ScreenshotStore.mtimeTolerance * 10)
+        XCTAssertFalse(try store.isAlreadyIndexed(at: path, mtime: beyondTol, size: size))
     }
 
     // MARK: - Helpers

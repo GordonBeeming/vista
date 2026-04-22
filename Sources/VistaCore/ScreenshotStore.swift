@@ -148,21 +148,28 @@ public final class ScreenshotStore: @unchecked Sendable {
 
     // MARK: - Lookups used during incremental scan
 
+    /// Tolerance applied when comparing a file's current mtime against
+    /// the value we stored the last time we indexed it. Public so tests
+    /// can pin behaviour to the same constant instead of re-declaring
+    /// the magic number.
+    public static let mtimeTolerance: TimeInterval = 0.001
+
     /// Whether the DB already holds an entry for `url` matching the given
-    /// `(mtime, size)`. Mtime is compared with a 1 ms tolerance to survive
-    /// the `Double` round-trip through SQLite's REAL column: at year-2026
-    /// timestamps (~1.78e9 s) one Double ULP is ~400 ns, which is below
-    /// APFS's ns-resolution mtime, so exact equality sporadically fails
-    /// and the indexer used to re-OCR a random ~37% subset of rows on
-    /// every relaunch. `size` is still compared exactly — a real edit
-    /// almost always changes size, so the tolerance on mtime doesn't
-    /// mask genuine changes.
+    /// `(mtime, size)`. Mtime is compared with `mtimeTolerance` (1 ms) to
+    /// survive the `Double` round-trip through SQLite's REAL column: at
+    /// year-2026 timestamps (~1.78e9 s) one Double ULP is ~400 ns, which
+    /// is coarser than APFS's ns-resolution mtime, so a Double can't
+    /// represent every distinct APFS timestamp and exact equality
+    /// sporadically fails. Before the tolerance, the indexer re-OCR'd a
+    /// random ~37 % subset of rows on every relaunch. `size` is still
+    /// compared exactly — a real edit almost always changes size, so the
+    /// slack on mtime doesn't mask genuine changes.
     public func isAlreadyIndexed(at url: URL, mtime: Date, size: Int64) throws -> Bool {
         guard let existing = try fingerprint(for: url) else { return false }
         guard existing.size == size else { return false }
         let drift = abs(existing.mtime.timeIntervalSinceReferenceDate
                       - mtime.timeIntervalSinceReferenceDate)
-        return drift < 0.001
+        return drift <= Self.mtimeTolerance
     }
 
     /// Returns the (mtime, size) we last indexed for this path, or nil if
