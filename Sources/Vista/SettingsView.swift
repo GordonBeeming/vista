@@ -1,45 +1,356 @@
-// SettingsView.swift — Placeholder Settings scene.
+// SettingsView.swift — Full tabbed preferences.
 //
-// Phase 3 fills this in with the tabbed prefs described in the plan
-// (General, Behaviour, Folders, Search, Appearance, Shortcuts, Permissions).
-// For now we ship a single informational view so the menu item works and
-// ⌘, opens something rather than being inert.
+// Matches every knob Raycast exposes plus vista's two extras (user-set
+// hotkey and panel size). Each tab reads and writes straight through the
+// shared Preferences object, which persists to UserDefaults / bookmarks
+// and emits change events for the downstream components (Indexer,
+// HotKeyManager, FloatingPanel) to react to.
 
 import SwiftUI
+import AppKit
+import VistaCore
 
 struct SettingsView: View {
+    @Bindable var preferences: Preferences
+    let appState: AppState
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                Image(systemName: "camera.viewfinder")
-                    .font(.largeTitle)
-                    .foregroundStyle(.tint)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Vista")
-                        .font(.title2).bold()
-                    Text("Screenshot search for macOS")
-                        .foregroundStyle(.secondary)
+        TabView {
+            GeneralTab(preferences: preferences, appState: appState)
+                .tabItem { Label("General", systemImage: "gear") }
+
+            BehaviourTab(preferences: preferences)
+                .tabItem { Label("Behaviour", systemImage: "return") }
+
+            FoldersTab(preferences: preferences)
+                .tabItem { Label("Folders", systemImage: "folder") }
+
+            SearchTab(preferences: preferences)
+                .tabItem { Label("Search", systemImage: "magnifyingglass") }
+
+            AppearanceTab(preferences: preferences)
+                .tabItem { Label("Appearance", systemImage: "rectangle.on.rectangle") }
+
+            ShortcutsTab(preferences: preferences)
+                .tabItem { Label("Shortcuts", systemImage: "command") }
+
+            PermissionsTab(appState: appState)
+                .tabItem { Label("Permissions", systemImage: "checkmark.shield") }
+        }
+        .frame(width: 540, height: 420)
+        .padding(.top, 10)
+    }
+}
+
+// MARK: - General
+
+private struct GeneralTab: View {
+    @Bindable var preferences: Preferences
+    let appState: AppState
+
+    var body: some View {
+        Form {
+            Toggle("Launch at login", isOn: $preferences.launchAtLogin)
+            Toggle("Pause indexing", isOn: .init(
+                get: { appState.isPaused },
+                set: { _ in appState.togglePause() }
+            ))
+        }
+        .formStyle(.grouped)
+        .padding(20)
+    }
+}
+
+// MARK: - Behaviour
+
+private struct BehaviourTab: View {
+    @Bindable var preferences: Preferences
+
+    var body: some View {
+        Form {
+            Picker("Primary Action", selection: $preferences.primaryAction) {
+                ForEach(PrimaryAction.allCases) { action in
+                    Text(action.label).tag(action)
                 }
             }
-
-            Divider()
-
-            Text("Preferences are on the way.")
-                .font(.headline)
-            Text("Folder list, OCR accuracy, panel size, and global hotkey rebinding land in the next update. For now vista watches the macOS default screenshot folder and responds to ⌘⇧S.")
+            Text("What ⏎ does when a result is selected. Every action is still available via the ⌘K menu.")
+                .font(.caption)
                 .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+        }
+        .formStyle(.grouped)
+        .padding(20)
+    }
+}
 
-            Spacer()
+// MARK: - Folders
+
+private struct FoldersTab: View {
+    @Bindable var preferences: Preferences
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Vista watches the macOS default screenshot location automatically. Add any extra folders you want to search.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
 
             HStack {
+                Image(systemName: "folder.fill.badge.gearshape")
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading) {
+                    Text("Default screenshot folder")
+                    Text(VistaPaths.defaultScreenshotFolder().path)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                }
                 Spacer()
-                Text("v0.1.0")
+                Text("System")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
+            .padding(8)
+            .background(Color(nsColor: .textBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+
+            // User-added folders list.
+            if preferences.watchedFolders.isEmpty {
+                Text("No additional folders. Click ‘Add Folder…’ to include a custom location.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 16)
+            } else {
+                List {
+                    ForEach(preferences.watchedFolders) { folder in
+                        HStack {
+                            Image(systemName: "folder")
+                                .foregroundStyle(.secondary)
+                            Text(folder.displayPath)
+                                .lineLimit(1)
+                                .truncationMode(.head)
+                            Spacer()
+                            Button {
+                                NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: folder.displayPath)
+                            } label: {
+                                Image(systemName: "arrow.up.forward.square")
+                            }
+                            .buttonStyle(.plain)
+                            .help("Show in Finder")
+                            Button(role: .destructive) {
+                                preferences.removeFolder(id: folder.id)
+                            } label: {
+                                Image(systemName: "minus.circle.fill")
+                                    .foregroundStyle(.red)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Remove")
+                        }
+                    }
+                }
+                .frame(minHeight: 120)
+            }
+
+            HStack {
+                Spacer()
+                Button("Add Folder…") { addFolder() }
+                    .controlSize(.large)
+            }
+
+            Toggle("Include all images & movies", isOn: $preferences.includeAllMedia)
+                .help("Index every image and video in watched folders, not just files that look like screenshots.")
+
+            Spacer()
         }
-        .padding(24)
-        .frame(width: 480, height: 280)
+        .padding(20)
+    }
+
+    private func addFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Watch"
+        panel.message = "Choose a folder to index screenshots from."
+        if panel.runModal() == .OK, let url = panel.url {
+            preferences.addFolder(url)
+        }
+    }
+}
+
+// MARK: - Search
+
+private struct SearchTab: View {
+    @Bindable var preferences: Preferences
+
+    var body: some View {
+        Form {
+            Picker("Text Recognition", selection: $preferences.ocrLevel) {
+                Text("Off").tag(OCRRecognizer.Level.off)
+                Text("Fast").tag(OCRRecognizer.Level.fast)
+                Text("Accurate").tag(OCRRecognizer.Level.accurate)
+            }
+            Text(ocrDescription)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Picker("Storage Duration", selection: $preferences.storageDuration) {
+                ForEach(StorageDuration.allCases) { duration in
+                    Text(duration.label).tag(duration)
+                }
+            }
+            Text("Older index entries are removed automatically. Pinned screenshots are kept regardless. Your actual image files are never deleted.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Toggle("Include all images & movies", isOn: $preferences.includeAllMedia)
+            Text("Index every image and video file, not just ones that look like screenshots.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .formStyle(.grouped)
+        .padding(20)
+    }
+
+    private var ocrDescription: String {
+        switch preferences.ocrLevel {
+        case .off:      return "OCR is disabled — only filenames and dates are searched."
+        case .fast:     return "Fast OCR. Lower CPU, slightly less accurate on small or stylised text."
+        case .accurate: return "Accurate OCR uses more CPU but handles small text and non-Latin scripts better."
+        }
+    }
+}
+
+// MARK: - Appearance
+
+private struct AppearanceTab: View {
+    @Bindable var preferences: Preferences
+
+    var body: some View {
+        Form {
+            Section {
+                HStack {
+                    Text("Panel Size")
+                    Spacer()
+                    Text("\(Int(preferences.panelSizeFraction * 100))%")
+                        .monospaced()
+                        .foregroundStyle(.secondary)
+                }
+                Slider(value: $preferences.panelSizeFraction, in: 0.3...1.0, step: 0.05) {
+                    Text("Panel size")
+                } minimumValueLabel: {
+                    Text("30%").font(.caption)
+                } maximumValueLabel: {
+                    Text("100%").font(.caption)
+                }
+                HStack(spacing: 8) {
+                    Button("Compact")    { preferences.panelSizeFraction = 0.4 }
+                    Button("Comfortable") { preferences.panelSizeFraction = 0.6 }
+                    Button("Large")      { preferences.panelSizeFraction = 0.8 }
+                    Button("Full")       { preferences.panelSizeFraction = 1.0 }
+                }
+                .buttonStyle(.bordered)
+
+                Text("How much of the active screen the search panel takes up when you invoke the hotkey. Bigger panel = bigger thumbnails.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding(20)
+    }
+}
+
+// MARK: - Shortcuts
+
+private struct ShortcutsTab: View {
+    @Bindable var preferences: Preferences
+
+    var body: some View {
+        Form {
+            LabeledContent("Invoke hotkey") {
+                KeyRecorderView(chord: $preferences.hotKey)
+            }
+            Text("Click and press any modifier+key combination to rebind. ⎋ cancels, ⌫ clears.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Spacer()
+                Button("Reset to ⌘⇧S") {
+                    preferences.hotKey = .defaultInvoke
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding(20)
+    }
+}
+
+// MARK: - Permissions
+
+private struct PermissionsTab: View {
+    let appState: AppState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Vista needs a few macOS permissions to work. Grant them here, or from System Settings → Privacy & Security.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            PermissionRow(
+                title: "Accessibility",
+                description: "Required to register the global hotkey.",
+                openPane: "Privacy_Accessibility"
+            )
+            PermissionRow(
+                title: "Full Disk Access",
+                description: "Optional. Grant if you want to index folders outside of your home directory.",
+                openPane: "Privacy_AllFiles"
+            )
+            PermissionRow(
+                title: "Automation (System Events)",
+                description: "Required for the ‘Paste to Front App’ action.",
+                openPane: "Privacy_Automation"
+            )
+
+            Divider()
+            HStack {
+                Text("Indexed screenshots:")
+                Spacer()
+                Text("\(appState.indexedCount)")
+                    .monospaced()
+            }
+            .font(.callout)
+
+            Spacer()
+        }
+        .padding(20)
+    }
+}
+
+private struct PermissionRow: View {
+    let title: String
+    let description: String
+    let openPane: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "checkmark.shield")
+                .foregroundStyle(.tint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).bold()
+                Text(description).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Open") {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(openPane)") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+        }
+        .padding(10)
+        .background(Color(nsColor: .textBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 }

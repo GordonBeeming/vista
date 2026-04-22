@@ -27,7 +27,7 @@ struct VistaApp: App {
         // land in Phase 3 — today it's a placeholder so the menu item
         // can be enabled instead of a dead button.
         Settings {
-            SettingsView()
+            SettingsView(preferences: appState.preferences, appState: appState)
         }
     }
 }

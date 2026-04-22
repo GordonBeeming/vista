@@ -20,6 +20,7 @@ struct PanelContentView: View {
     @Bindable var model: SearchViewModel
     let thumbnails: ThumbnailCache
     let actions: ActionHandlers
+    let preferences: Preferences
     let dismiss: () -> Void
 
     // Drives keyboard focus so the search field is live the moment the
@@ -115,7 +116,7 @@ struct PanelContentView: View {
                 .fontWeight(.medium)
             Spacer()
             HStack(spacing: 6) {
-                Text("Copy to Clipboard")
+                Text(preferences.primaryAction.label)
                 Image(systemName: "return")
                     .foregroundStyle(.secondary)
             }
@@ -170,9 +171,7 @@ struct PanelContentView: View {
 
     private func runPrimary() {
         guard let record = model.selectedRecord else { return }
-        // Phase 2 hard-codes "Copy to Clipboard" as the primary action.
-        // Phase 3 will read this from preferences.
-        actions.run(.copyImage, on: record)
+        actions.run(preferences.primaryAction.rowAction, on: record)
         dismiss()
     }
 }

@@ -255,6 +255,18 @@ public final class ScreenshotStore: @unchecked Sendable {
         }
     }
 
+    /// Storage Duration pruner. Removes unpinned rows whose captured_at
+    /// predates `cutoff`. Pinned rows are never touched; neither are the
+    /// underlying image files — we only drop the index entry.
+    public func deleteUnpinned(olderThan cutoff: Date) throws {
+        try queue.sync {
+            try execWithBinds(
+                "DELETE FROM screenshots WHERE pinned = 0 AND captured_at < ?;",
+                binds: [.double(cutoff.timeIntervalSince1970)]
+            )
+        }
+    }
+
     public func setPinned(id: Int64, pinned: Bool) throws {
         try queue.sync {
             try execWithBinds(

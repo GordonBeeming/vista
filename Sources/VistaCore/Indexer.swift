@@ -24,7 +24,9 @@ public actor Indexer {
     }
 
     private let store: ScreenshotStore
-    private let ocr: OCRRecognizer
+    // Mutable so preferences can swap in a new recognizer when the user
+    // changes OCR level / languages without restarting the app.
+    private var ocr: OCRRecognizer
     private var watchedFolders: [URL]
     private let watcher = FSEventsWatcher()
 
@@ -98,6 +100,26 @@ public actor Indexer {
         watcher.stop()
         watcher.start(paths: folders)
         try await initialScan()
+    }
+
+    /// Swap the OCR recognizer at runtime — lets the preferences panel
+    /// change recognition level or languages without restarting the app.
+    /// Already-indexed files aren't re-OCR'd; the new settings apply to
+    /// files seen from now on (or to anything touched by Rescan Now).
+    public func setOCRRecognizer(_ ocr: OCRRecognizer) {
+        self.ocr = ocr
+    }
+
+    /// Deletes index entries (not image files) for unpinned screenshots
+    /// older than `cutoff`. Called from the storage-duration pruner when
+    /// preferences change or periodically while the app runs.
+    public func prune(olderThan cutoff: Date) async {
+        do {
+            try store.deleteUnpinned(olderThan: cutoff)
+            await emitWatchingProgress()
+        } catch {
+            NSLog("vista: prune failed: \(error)")
+        }
     }
 
     // MARK: - Initial / rescan logic

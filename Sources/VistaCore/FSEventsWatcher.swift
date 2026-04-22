@@ -53,11 +53,14 @@ public final class FSEventsWatcher: @unchecked Sendable {
         // to replay historical events — the initial scan handles existing
         // files. kFSEventStreamCreateFlagFileEvents = per-file granularity
         // (default is per-directory). IgnoreSelf avoids loopbacks when the
-        // app writes to the cache dir.
+        // app writes to the cache dir. UseCFTypes makes the callback
+        // receive a CFArray<CFString> for paths; without it the parameter
+        // is a raw `const char *const *` and casting it to CFArray crashes.
         let flags: UInt32 = UInt32(
             kFSEventStreamCreateFlagFileEvents
                 | kFSEventStreamCreateFlagIgnoreSelf
                 | kFSEventStreamCreateFlagNoDefer
+                | kFSEventStreamCreateFlagUseCFTypes
         )
 
         guard let ref = FSEventStreamCreate(

@@ -14,11 +14,18 @@ public final class PanelController {
     private let store: ScreenshotStore
     private let thumbnails: ThumbnailCache
     private let actions: ActionHandlers
+    private let preferences: Preferences
 
-    public init(store: ScreenshotStore, thumbnails: ThumbnailCache, actions: ActionHandlers) {
+    public init(
+        store: ScreenshotStore,
+        thumbnails: ThumbnailCache,
+        actions: ActionHandlers,
+        preferences: Preferences
+    ) {
         self.store = store
         self.thumbnails = thumbnails
         self.actions = actions
+        self.preferences = preferences
     }
 
     /// Toggle: if the panel is visible it hides, otherwise it appears.
@@ -33,6 +40,9 @@ public final class PanelController {
 
     public func show() {
         let panel = ensurePanel()
+        // Apply the latest panel-size preference every show so Appearance
+        // slider changes take effect without needing a relaunch.
+        panel.sizeFraction = preferences.panelSizeFraction
         panel.show()
     }
 
@@ -44,6 +54,7 @@ public final class PanelController {
             model: viewModel,
             thumbnails: thumbnails,
             actions: actions,
+            preferences: preferences,
             dismiss: { [weak self] in self?.panel?.orderOut(nil) }
         )
 
