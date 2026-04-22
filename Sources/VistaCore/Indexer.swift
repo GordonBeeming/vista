@@ -134,16 +134,16 @@ public actor Indexer {
         let fm = FileManager.default
         var discovered: [URL] = []
 
-        NSLog("vista: initialScan starting with \(watchedFolders.count) folder(s)")
+        VistaLog.log("initialScan starting with \(watchedFolders.count) folder(s)")
 
         for root in watchedFolders {
             // Probe the folder before enumerating so a permission failure
             // surfaces in the logs instead of silently returning zero.
             var isDir: ObjCBool = false
             let exists = fm.fileExists(atPath: root.path, isDirectory: &isDir)
-            NSLog("vista:   \(root.path) exists=\(exists) isDir=\(isDir.boolValue)")
+            VistaLog.log("  \(root.path) exists=\(exists) isDir=\(isDir.boolValue)")
             guard exists, isDir.boolValue else {
-                NSLog("vista:   skipping — not a readable directory")
+                VistaLog.log("  skipping — not a readable directory")
                 continue
             }
 
@@ -156,11 +156,11 @@ public actor Indexer {
                     // the error gives us something to diagnose with when
                     // iCloud placeholder files or permission-denied
                     // subdirectories turn up.
-                    NSLog("vista:   enumerator error at \(url.path): \(error.localizedDescription)")
+                    VistaLog.log("  enumerator error at \(url.path): \(error.localizedDescription)")
                     return true
                 }
             ) else {
-                NSLog("vista:   could not build enumerator for \(root.path)")
+                VistaLog.log("  could not build enumerator for \(root.path)")
                 continue
             }
 
@@ -178,10 +178,10 @@ public actor Indexer {
                 matched += 1
                 discovered.append(next)
             }
-            NSLog("vista:   enumerated \(seen) entries, matched \(matched) images under \(root.path)")
+            VistaLog.log("  enumerated \(seen) entries, matched \(matched) images under \(root.path)")
         }
 
-        NSLog("vista: initialScan discovered \(discovered.count) candidate files across \(watchedFolders.count) folder(s)")
+        VistaLog.log("initialScan discovered \(discovered.count) candidate files across \(watchedFolders.count) folder(s)")
 
         let total = discovered.count
         var done = 0
