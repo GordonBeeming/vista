@@ -132,7 +132,12 @@ extension HotKeyChord {
     /// the menu never shows a stale/wrong glyph — the global Carbon
     /// hotkey still fires regardless.
     var asSwiftUIShortcut: KeyboardShortcut? {
-        guard keyCode != 0 else { return nil }
+        // Carbon virtual keycode 0 is `kVK_ANSI_A`, so `keyCode == 0`
+        // alone isn't the "cleared" sentinel — only the pair
+        // (keyCode: 0, modifiers: 0) is. Treating keyCode 0 on its own
+        // as empty would silently drop the menu glyph for any chord on
+        // the A key (e.g. Hyper+A).
+        guard !(keyCode == 0 && modifiers == 0) else { return nil }
         guard let equivalent = Self.keyEquivalent(for: keyCode) else { return nil }
 
         // Carbon also vends an `EventModifiers` type, so the SwiftUI one
@@ -164,39 +169,11 @@ extension HotKeyChord {
             // users see their own glyph, not a QWERTY guess. Lowercased
             // because SwiftUI compares case-insensitively and the menu
             // draws the glyph in its own case regardless.
-            guard let name = layoutCharacter(for: keyCode), let ch = name.first else {
+            guard let name = HotKeyChord.layoutCharacter(for: keyCode),
+                  let ch = name.first else {
                 return nil
             }
             return KeyEquivalent(Character(ch.lowercased()))
-        }
-    }
-
-    private static func layoutCharacter(for keyCode: UInt32) -> String? {
-        guard let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue() else { return nil }
-        guard let layoutData = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else {
-            return nil
-        }
-        let data = Unmanaged<CFData>.fromOpaque(layoutData).takeUnretainedValue() as Data
-        return data.withUnsafeBytes { raw -> String? in
-            guard let ptr = raw.bindMemory(to: UCKeyboardLayout.self).baseAddress else { return nil }
-            var deadKeyState: UInt32 = 0
-            var chars: [UniChar] = Array(repeating: 0, count: 4)
-            var length = 0
-            let status = UCKeyTranslate(
-                ptr,
-                UInt16(keyCode),
-                UInt16(kUCKeyActionDisplay),
-                0,
-                UInt32(LMGetKbdType()),
-                OptionBits(kUCKeyTranslateNoDeadKeysBit),
-                &deadKeyState,
-                chars.count,
-                &length,
-                &chars
-            )
-            guard status == noErr, length > 0 else { return nil }
-            let result = String(utf16CodeUnits: chars, count: length)
-            return result.isEmpty ? nil : result
         }
     }
 }
