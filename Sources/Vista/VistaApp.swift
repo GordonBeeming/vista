@@ -21,5 +21,13 @@ struct VistaApp: App {
         // feel; `.window` would show a popover, which we don't want for the
         // Phase 1 stub. The real search UI is a separate NSPanel.
         .menuBarExtraStyle(.menu)
+
+        // Adding a Settings scene gives us a real target for SettingsLink
+        // and wires up the standard ⌘, shortcut automatically. Contents
+        // land in Phase 3 — today it's a placeholder so the menu item
+        // can be enabled instead of a dead button.
+        Settings {
+            SettingsView()
+        }
     }
 }

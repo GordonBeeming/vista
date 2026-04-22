@@ -28,10 +28,13 @@ struct MenuBarContentView: View {
 
         Divider()
 
-        Button("Preferences…") {
-            // Phase 3.
+        // SettingsLink is the blessed way to open the app's Settings scene
+        // from a MenuBarExtra — it handles focus, window creation, and the
+        // standard ⌘, binding without any AppKit glue on our side.
+        SettingsLink {
+            Text("Preferences…")
         }
-        .disabled(true)
+        .keyboardShortcut(",", modifiers: .command)
 
         Divider()
 

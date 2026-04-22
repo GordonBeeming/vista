@@ -20,8 +20,12 @@ public final class FloatingPanel: NSPanel {
     public var sizeFraction: CGFloat = 0.6
 
     public init(contentView: NSView) {
-        // borderless + resizable + nonactivating makes a HUD-ish panel.
-        let style: NSWindow.StyleMask = [.titled, .fullSizeContentView, .resizable, .nonactivatingPanel]
+        // Borderless = no traffic-light buttons, no titlebar strip. The
+        // whole visible surface is our SwiftUI content, which handles its
+        // own rounded corners and background material. `.titled` would
+        // bake in a chrome strip we can't fully hide, which shows up as a
+        // dark border above the SwiftUI material.
+        let style: NSWindow.StyleMask = [.borderless, .resizable, .nonactivatingPanel]
 
         // 800x600 is replaced immediately by applySize() on first show —
         // NSPanel refuses to init with a zero-sized rect so pick something
@@ -33,15 +37,17 @@ public final class FloatingPanel: NSPanel {
             defer: false
         )
 
-        self.titlebarAppearsTransparent = true
-        self.titleVisibility = .hidden
         self.isMovableByWindowBackground = true
         self.hidesOnDeactivate = true
-        // Float above regular windows — same level Spotlight / Raycast use.
         self.level = .floating
         self.collectionBehavior = [.canJoinAllSpaces, .transient, .fullScreenAuxiliary]
         self.isReleasedWhenClosed = false
         self.becomesKeyOnlyIfNeeded = false
+        // isOpaque=false + clear backgroundColor lets the SwiftUI material
+        // and corner clip-shape define the visible shape of the window.
+        // Without these the rounded corners render onto an opaque grey
+        // square (the "transparent border" effect).
+        self.isOpaque = false
         self.backgroundColor = .clear
         self.hasShadow = true
 
