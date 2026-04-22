@@ -6,12 +6,10 @@ import VistaCore
 
 struct MenuBarContentView: View {
     @Bindable var appState: AppState
-    // `openSettings` is the macOS 14+ environment value that drives the
-    // Settings scene. Unlike SettingsLink it's a plain closure, which
-    // lets us activate the app first so the window reliably comes to
-    // front — agent apps (LSUIElement=YES) otherwise often open their
-    // Settings window behind whichever app is already frontmost.
-    @Environment(\.openSettings) private var openSettings
+    // openWindow drives our Window scene. Combined with NSApp.activate
+    // and a find-and-raise pass, this reliably brings the preferences
+    // window forward even when the app is acting as an accessory.
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Text(statusLine)
@@ -36,10 +34,7 @@ struct MenuBarContentView: View {
         Divider()
 
         Button("Preferences…") {
-            // Activate before opening so the window isn't buried under
-            // whichever app was frontmost when the menu was clicked.
-            NSApp.activate(ignoringOtherApps: true)
-            openSettings()
+            openPreferencesWindow()
         }
         .keyboardShortcut(",", modifiers: .command)
 
@@ -49,6 +44,24 @@ struct MenuBarContentView: View {
             NSApplication.shared.terminate(nil)
         }
         .keyboardShortcut("q")
+    }
+
+    /// Opens the preferences Window scene and forces it to the front.
+    ///
+    /// We do two passes: an immediate activate+open, and a short-delayed
+    /// orderFrontRegardless so a freshly-created window that races our
+    /// first pass still gets raised. The delay is small enough to feel
+    /// instant but long enough for SwiftUI to have created the NSWindow.
+    private func openPreferencesWindow() {
+        NSApp.activate(ignoringOtherApps: true)
+        openWindow(id: WindowID.preferences)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            NSApp.activate(ignoringOtherApps: true)
+            if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == WindowID.preferences }) {
+                window.orderFrontRegardless()
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
     }
 
     private var statusLine: String {

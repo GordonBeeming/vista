@@ -17,17 +17,24 @@ struct VistaApp: App {
         MenuBarExtra("Vista", systemImage: "camera.viewfinder") {
             MenuBarContentView(appState: appState)
         }
-        // Menu style — the `.menu` variant matches the classic macOS menu
-        // feel; `.window` would show a popover, which we don't want for the
-        // Phase 1 stub. The real search UI is a separate NSPanel.
         .menuBarExtraStyle(.menu)
 
-        // Adding a Settings scene gives us a real target for SettingsLink
-        // and wires up the standard ⌘, shortcut automatically. Contents
-        // land in Phase 3 — today it's a placeholder so the menu item
-        // can be enabled instead of a dead button.
-        Settings {
+        // Regular Window scene (not SwiftUI's Settings scene) — Settings
+        // ties itself to the app's activation state, which for an agent
+        // app (LSUIElement=YES) is "not really active", so openSettings()
+        // creates the window but macOS refuses to bring it forward. A
+        // Window scene we control ourselves + NSApp.activate + find-and-
+        // raise on open works every time.
+        Window("Vista Preferences", id: WindowID.preferences) {
             SettingsView(preferences: appState.preferences, appState: appState)
         }
+        .windowResizability(.contentSize)
+        .defaultSize(width: 540, height: 460)
     }
+}
+
+/// Central home for scene / window identifiers so the menu bar and the
+/// scene registration can't drift out of sync via a typo'd string.
+enum WindowID {
+    static let preferences = "vista.preferences"
 }

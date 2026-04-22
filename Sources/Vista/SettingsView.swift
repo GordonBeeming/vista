@@ -40,15 +40,15 @@ struct SettingsView: View {
         .frame(width: 540, height: 420)
         .padding(.top, 10)
         // Belt-and-braces window raise: even with NSApp.activate at the
-        // call site, a sleeping Settings window can stay layered behind
-        // the frontmost app. Hooking onAppear lets us grab the hosting
-        // NSWindow once it exists and force it above any other window.
+        // call site, a preferences window in an agent app can stay
+        // layered behind the frontmost app. Match by our explicit
+        // identifier so we don't accidentally raise an unrelated window.
         .onAppear {
             DispatchQueue.main.async {
                 NSApp.activate(ignoringOtherApps: true)
-                if let window = NSApp.windows.first(where: { $0.title.contains("Settings") || $0.identifier?.rawValue.contains("settings") == true }) {
+                if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == "vista.preferences" }) {
                     window.orderFrontRegardless()
-                    window.makeKey()
+                    window.makeKeyAndOrderFront(nil)
                 }
             }
         }
