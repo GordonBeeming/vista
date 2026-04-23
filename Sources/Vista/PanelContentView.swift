@@ -127,49 +127,62 @@ struct PanelContentView: View {
         let thumbCacheSize: ThumbnailCache.Size = target > 380 ? .large : target > 180 ? .medium : .small
         let spacing: CGFloat = 16
         return GeometryReader { proxy in
-            ScrollView {
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: target, maximum: target * 1.6), spacing: spacing)],
-                    spacing: spacing
-                ) {
-                    ForEach(Array(model.results.enumerated()), id: \.element.id) { index, record in
-                        ResultCell(
-                            record: record,
-                            isSelected: index == model.selectedIndex,
-                            thumbnails: thumbnails,
-                            thumbSize: thumbCacheSize
-                        )
-                        .onTapGesture {
-                            model.selectedIndex = index
-                            runPrimary()
+            ScrollViewReader { scrollProxy in
+                ScrollView {
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: target, maximum: target * 1.6), spacing: spacing)],
+                        spacing: spacing
+                    ) {
+                        ForEach(Array(model.results.enumerated()), id: \.element.id) { index, record in
+                            ResultCell(
+                                record: record,
+                                isSelected: index == model.selectedIndex,
+                                thumbnails: thumbnails,
+                                thumbSize: thumbCacheSize
+                            )
+                            .onTapGesture {
+                                model.selectedIndex = index
+                                runPrimary()
+                            }
                         }
                     }
+                    .padding(spacing)
                 }
-                .padding(spacing)
-            }
-            // Keep columnCount in sync with the actual layout. The formula
-            // mirrors what LazyVGrid.adaptive does internally: pick the
-            // largest N where N*minCol + (N-1)*spacing ≤ usableWidth.
-            .onAppear {
-                columnCount = Self.columnsFor(
-                    width: proxy.size.width,
-                    target: target,
-                    spacing: spacing
-                )
-            }
-            .onChange(of: proxy.size.width) { _, newWidth in
-                columnCount = Self.columnsFor(
-                    width: newWidth,
-                    target: target,
-                    spacing: spacing
-                )
-            }
-            .onChange(of: target) { _, newTarget in
-                columnCount = Self.columnsFor(
-                    width: proxy.size.width,
-                    target: newTarget,
-                    spacing: spacing
-                )
+                // Keep the selected cell visible as arrow-key nav moves the
+                // border off-screen. `anchor: nil` is a bring-into-view —
+                // cells already visible don't move, so stepping within a
+                // row doesn't jitter the scroll.
+                .onChange(of: model.selectedIndex) { _, newIndex in
+                    guard model.results.indices.contains(newIndex) else { return }
+                    let targetID = model.results[newIndex].id
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        scrollProxy.scrollTo(targetID, anchor: nil)
+                    }
+                }
+                // Keep columnCount in sync with the actual layout. The formula
+                // mirrors what LazyVGrid.adaptive does internally: pick the
+                // largest N where N*minCol + (N-1)*spacing ≤ usableWidth.
+                .onAppear {
+                    columnCount = Self.columnsFor(
+                        width: proxy.size.width,
+                        target: target,
+                        spacing: spacing
+                    )
+                }
+                .onChange(of: proxy.size.width) { _, newWidth in
+                    columnCount = Self.columnsFor(
+                        width: newWidth,
+                        target: target,
+                        spacing: spacing
+                    )
+                }
+                .onChange(of: target) { _, newTarget in
+                    columnCount = Self.columnsFor(
+                        width: proxy.size.width,
+                        target: newTarget,
+                        spacing: spacing
+                    )
+                }
             }
         }
     }
