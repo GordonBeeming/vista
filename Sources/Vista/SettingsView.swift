@@ -182,7 +182,7 @@ private struct BehaviourTab: View {
                     Text(option.label).tag(option)
                 }
             }
-            Text("Clear the search and jump back to the top when Vista has been hidden this long. Set to Never to keep your last search across sessions.")
+            Text("Clear the search and jump back to the top when Vista has been hidden this long. Set to Never to keep your last search between panel opens.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

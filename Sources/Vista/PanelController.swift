@@ -78,12 +78,12 @@ public final class PanelController {
         panel.show()
     }
 
-    /// Hides the panel and stamps the hide time so the next show can
-    /// decide whether enough time has elapsed to warrant a state reset.
-    /// Use this instead of calling `panel.orderOut` directly.
+    /// Hides the panel. The hide-time stamp is set by the FloatingPanel's
+    /// `onHide` hook (see `ensurePanel`) — that runs for every dismissal
+    /// path, including AppKit's `hidesOnDeactivate` auto-hide on focus
+    /// loss, not just calls that go through this method.
     private func hidePanel() {
         panel?.orderOut(nil)
-        lastHiddenAt = Date()
     }
 
     /// Records whoever was frontmost before we activate. Skips vista
@@ -157,6 +157,7 @@ public final class PanelController {
         let host = NSHostingView(rootView: content)
         host.autoresizingMask = [.width, .height]
         let panel = FloatingPanel(contentView: host)
+        panel.onHide = { [weak self] in self?.lastHiddenAt = Date() }
         self.panel = panel
         return panel
     }

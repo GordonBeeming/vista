@@ -43,12 +43,14 @@ public final class SearchViewModel {
     /// open" state. Called by PanelController when the panel has been
     /// hidden longer than the user's reset timeout.
     ///
-    /// Setting `queryText` schedules a debounced query, but we also run
-    /// the empty query synchronously so the very next frame the panel
-    /// appears on is already showing the fresh, top-of-list state — no
-    /// flash of stale results.
+    /// Setting `queryText` schedules a debounced query, but we cancel
+    /// it and run the empty query synchronously instead. Without the
+    /// cancel we'd hit `store.search` twice — once now, once again
+    /// ~120 ms later — which is noticeable on large indexes.
     public func resetState() {
         queryText = ""
+        debounceTask?.cancel()
+        debounceTask = nil
         runQuery("")
     }
 
