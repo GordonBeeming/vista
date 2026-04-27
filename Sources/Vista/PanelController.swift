@@ -11,6 +11,7 @@ import VistaCore
 public final class PanelController {
 
     private var panel: FloatingPanel?
+    private var viewModel: SearchViewModel?
     private let store: ScreenshotStore
     private let thumbnails: ThumbnailCache
     private let actions: ActionHandlers
@@ -20,6 +21,12 @@ public final class PanelController {
     /// captured before we steal focus so "Paste to Front App" can aim
     /// back at the original target rather than at vista itself.
     private var previousFrontmostApp: NSRunningApplication?
+
+    /// Wall-clock time the panel was last hidden. Used to decide whether
+    /// to reset query/selection on the next show — see `show()`. nil
+    /// means we've never hidden the panel this session, in which case
+    /// the view-model is already fresh and there's nothing to reset.
+    private var lastHiddenAt: Date?
 
     public init(
         store: ScreenshotStore,
@@ -44,7 +51,7 @@ public final class PanelController {
     /// This is what we bind the global hotkey to.
     public func toggle() {
         if let panel, panel.isVisible {
-            panel.orderOut(nil)
+            hidePanel()
         } else {
             capturePreviousFrontmost()
             show()
@@ -54,10 +61,29 @@ public final class PanelController {
     public func show() {
         capturePreviousFrontmost()
         let panel = ensurePanel()
+        // If the panel has been out of sight long enough that the
+        // previous query is unlikely to still be relevant, wipe back to
+        // a clean state before the window is visible. Decided on each
+        // show so changing the timeout in Settings takes effect
+        // immediately. Skip on the very first show of the session
+        // (lastHiddenAt == nil) — the view-model is already fresh.
+        if let last = lastHiddenAt,
+           let timeout = preferences.panelResetTimeout.seconds,
+           Date().timeIntervalSince(last) >= timeout {
+            viewModel?.resetState()
+        }
         // Apply the latest panel-size preference every show so Appearance
         // slider changes take effect without needing a relaunch.
         panel.sizeFraction = preferences.panelSizeFraction
         panel.show()
+    }
+
+    /// Hides the panel and stamps the hide time so the next show can
+    /// decide whether enough time has elapsed to warrant a state reset.
+    /// Use this instead of calling `panel.orderOut` directly.
+    private func hidePanel() {
+        panel?.orderOut(nil)
+        lastHiddenAt = Date()
     }
 
     /// Records whoever was frontmost before we activate. Skips vista
@@ -85,10 +111,10 @@ public final class PanelController {
     /// clipboard copy already happened in ActionHandlers.
     private func pasteToPreviousFrontmost() {
         guard let target = previousFrontmostApp else {
-            panel?.orderOut(nil)
+            hidePanel()
             return
         }
-        panel?.orderOut(nil)
+        hidePanel()
         // Activate after panel hides. A short delay gives AppKit time to
         // process the orderOut before we ask another app to take focus;
         // without it the frontmost-change can be dropped on the floor.
@@ -117,12 +143,13 @@ public final class PanelController {
         if let existing = panel { return existing }
 
         let viewModel = SearchViewModel(store: store)
+        self.viewModel = viewModel
         let content = PanelContentView(
             model: viewModel,
             thumbnails: thumbnails,
             actions: actions,
             preferences: preferences,
-            dismiss: { [weak self] in self?.panel?.orderOut(nil) }
+            dismiss: { [weak self] in self?.hidePanel() }
         )
 
         // NSHostingView is the bridge between SwiftUI and AppKit — the

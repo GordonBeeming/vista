@@ -81,6 +81,45 @@ public enum StorageDuration: String, CaseIterable, Identifiable, Sendable, Codab
     }
 }
 
+/// How long the panel must be hidden before reopening it resets the
+/// search query, scroll position, and selection. "Resume where I left
+/// off" only feels right inside a single train-of-thought; come back an
+/// hour later and a stale query is friction, not a feature.
+public enum PanelResetTimeout: String, CaseIterable, Identifiable, Sendable, Codable {
+    case never
+    case thirtySeconds
+    case oneMinute
+    case twoMinutes
+    case fiveMinutes
+    case tenMinutes
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .never:          return "Never"
+        case .thirtySeconds:  return "30 seconds"
+        case .oneMinute:      return "1 minute"
+        case .twoMinutes:     return "2 minutes"
+        case .fiveMinutes:    return "5 minutes"
+        case .tenMinutes:     return "10 minutes"
+        }
+    }
+
+    /// Hidden-duration threshold above which the panel resets on next
+    /// show. nil = never reset.
+    public var seconds: TimeInterval? {
+        switch self {
+        case .never:         return nil
+        case .thirtySeconds: return 30
+        case .oneMinute:     return 60
+        case .twoMinutes:    return 120
+        case .fiveMinutes:   return 300
+        case .tenMinutes:    return 600
+        }
+    }
+}
+
 /// A persistent, security-scoped reference to a folder the user added.
 /// The bookmark is what survives app restarts — re-resolving it yields
 /// back a URL we're allowed to read even in a hardened-runtime build.
@@ -130,6 +169,7 @@ public final class Preferences {
         static let storageDuration = "vista.storageDuration"
         static let launchAtLogin = "vista.launchAtLogin"
         static let watchDefaultFolder = "vista.watchDefaultFolder"
+        static let panelResetTimeout = "vista.panelResetTimeout"
     }
 
     private let defaults: UserDefaults
@@ -227,6 +267,15 @@ public final class Preferences {
         didSet {
             defaults.set(watchDefaultFolder, forKey: Key.watchDefaultFolder)
             emitChange(.folders)
+        }
+    }
+
+    /// How long the panel can stay hidden before its query/selection are
+    /// reset on next show. Read on demand by PanelController; no
+    /// downstream observers need to react, so we don't emit a change.
+    public var panelResetTimeout: PanelResetTimeout {
+        didSet {
+            defaults.set(panelResetTimeout.rawValue, forKey: Key.panelResetTimeout)
         }
     }
 
@@ -365,6 +414,9 @@ public final class Preferences {
         // Default to ON — matches Raycast behaviour and means fresh installs
         // "just work" without requiring a folder to be added first.
         self.watchDefaultFolder = defaults.object(forKey: Key.watchDefaultFolder) as? Bool ?? true
+
+        let resetRaw = defaults.string(forKey: Key.panelResetTimeout) ?? PanelResetTimeout.twoMinutes.rawValue
+        self.panelResetTimeout = PanelResetTimeout(rawValue: resetRaw) ?? .twoMinutes
 
         // Watched folders live in a JSON file so we can store bookmark
         // data cleanly. Application Support is the right location —
