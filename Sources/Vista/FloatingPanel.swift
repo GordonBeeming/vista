@@ -19,6 +19,12 @@ public final class FloatingPanel: NSPanel {
     /// needing a relaunch.
     public var sizeFraction: CGFloat = 0.6
 
+    /// Fired after every `orderOut` — including the AppKit-driven path
+    /// that runs when `hidesOnDeactivate` makes the panel disappear on
+    /// focus loss. PanelController hooks this to keep `lastHiddenAt`
+    /// accurate across every dismissal route, not just explicit ones.
+    public var onHide: (() -> Void)?
+
     public init(contentView: NSView) {
         // Borderless = no traffic-light buttons, no titlebar strip. The
         // whole visible surface is our SwiftUI content, which handles its
@@ -81,6 +87,15 @@ public final class FloatingPanel: NSPanel {
         // embedded text field to become first responder.
         makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// AppKit funnels every dismissal — explicit `orderOut`, hotkey
+    /// toggle, paste flow, and the `hidesOnDeactivate` auto-hide on
+    /// focus loss — through this method, so it's the single point we
+    /// need to fire `onHide` from.
+    public override func orderOut(_ sender: Any?) {
+        super.orderOut(sender)
+        onHide?()
     }
 
     /// Chosen by proximity to the cursor — multi-monitor users expect the

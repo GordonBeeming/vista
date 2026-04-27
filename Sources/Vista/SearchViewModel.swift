@@ -39,6 +39,21 @@ public final class SearchViewModel {
         runQuery(queryText)
     }
 
+    /// Wipes the query, scroll, and selection back to a clean "first
+    /// open" state. Called by PanelController when the panel has been
+    /// hidden longer than the user's reset timeout.
+    ///
+    /// Setting `queryText` schedules a debounced query, but we cancel
+    /// it and run the empty query synchronously instead. Without the
+    /// cancel we'd hit `store.search` twice — once now, once again
+    /// ~120 ms later — which is noticeable on large indexes.
+    public func resetState() {
+        queryText = ""
+        debounceTask?.cancel()
+        debounceTask = nil
+        runQuery("")
+    }
+
     public var selectedRecord: ScreenshotRecord? {
         guard results.indices.contains(selectedIndex) else { return nil }
         return results[selectedIndex]

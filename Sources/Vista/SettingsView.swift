@@ -176,6 +176,15 @@ private struct BehaviourTab: View {
             Text("What ⏎ does when a result is selected. Every action is still available via the ⌘K menu.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            Picker("Reset after", selection: $preferences.panelResetTimeout) {
+                ForEach(PanelResetTimeout.allCases) { option in
+                    Text(option.label).tag(option)
+                }
+            }
+            Text("Clear the search and jump back to the top when Vista has been hidden this long. Set to Never to keep your last search between panel opens.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .formStyle(.grouped)
         .padding(20)
