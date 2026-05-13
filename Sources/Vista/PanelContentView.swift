@@ -393,9 +393,13 @@ struct PanelContentView: View {
                 return nil
             }
             // ⌘K toggles the actions popover. Mirrors the footer hint and
-            // matches Raycast muscle memory for the same shortcut.
+            // matches Raycast muscle memory for the same shortcut. Pass
+            // the event through when there's nothing selected — swallowing
+            // it would turn ⌘K into a dead key on empty result lists and
+            // block any future global binding from seeing it.
             if chars == "k", !mods.contains(.shift) {
-                if model.selectedRecord != nil { actionsVisible.toggle() }
+                guard model.selectedRecord != nil else { return event }
+                actionsVisible.toggle()
                 return nil
             }
         }
@@ -506,7 +510,11 @@ private struct PreviewOverlay: View {
             .frame(width: geo.size.width, height: geo.size.height)
         }
         // Re-load when arrow keys change the selected record while the
-        // overlay is open. `task(id:)` cancels the previous load.
+        // overlay is open. `task(id:)` cancels its own body when id
+        // changes, but `Task.detached` is unstructured and keeps running
+        // even after cancellation — without the isCancelled check below,
+        // a slow load from the previous record can land after a faster
+        // load for the new one and briefly show the wrong screenshot.
         .task(id: record.id) {
             let loaded = await Task.detached(priority: .userInitiated) { [record] in
                 try? thumbnails.thumbnail(
@@ -516,6 +524,7 @@ private struct PreviewOverlay: View {
                     sourceSize: record.size
                 )
             }.value
+            guard !Task.isCancelled else { return }
             self.image = loaded
         }
     }
@@ -668,8 +677,9 @@ private struct ActionsPopover: View {
                         Text(label(for: action))
                             .foregroundStyle(.primary)
                         Spacer()
-                        if let hint = shortcut(for: action) {
-                            Text(hint)
+                        let hints = shortcuts(for: action)
+                        if !hints.isEmpty {
+                            Text(hints.joined(separator: " · "))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .monospaced()
@@ -696,14 +706,19 @@ private struct ActionsPopover: View {
     }
 
     /// Shortcuts wired up in `handlePanelKey`. Showing only the ones that
-    /// actually work avoids promising bindings that don't exist.
-    private func shortcut(for action: RowAction) -> String? {
-        if action == preferences.primaryAction.rowAction { return "↵" }
+    /// actually work avoids promising bindings that don't exist. Returns
+    /// a list because some actions have two bindings at once — e.g. when
+    /// the user's primary action is Copy OCR Text, both ↵ and ⌘⇧C fire it,
+    /// and hiding either hint would misrepresent the live bindings.
+    private func shortcuts(for action: RowAction) -> [String] {
+        var hints: [String] = []
+        if action == preferences.primaryAction.rowAction { hints.append("↵") }
         switch action {
-        case .togglePin:    return "⌘P"
-        case .copyOCRText:  return "⌘⇧C"
-        default:            return nil
+        case .togglePin:    hints.append("⌘P")
+        case .copyOCRText:  hints.append("⌘⇧C")
+        default:            break
         }
+        return hints
     }
 
     private static func icon(for action: RowAction) -> String {
