@@ -318,15 +318,41 @@ public final class ScreenshotStore: @unchecked Sendable {
         }
     }
 
+    /// Keyset pagination cursor — the (captured_at, id) of the last row a
+    /// caller has already seen. Paginating on this compound key instead of
+    /// SQL OFFSET keeps the result window stable while the indexer inserts
+    /// newer rows mid-scroll: OFFSET would shift every window and dupe/skip
+    /// rows, whereas a keyset always continues strictly below a fixed point.
+    /// `id` breaks ties when two screenshots share a captured_at timestamp.
+    public struct Cursor: Sendable {
+        public let capturedAt: Double
+        public let id: Int64
+        public init(capturedAt: Double, id: Int64) {
+            self.capturedAt = capturedAt
+            self.id = id
+        }
+    }
+
     /// Returns recently-captured records, newest first. Used as the default
-    /// view when no query is typed.
-    public func recent(limit: Int = 200) throws -> [ScreenshotRecord] {
+    /// view when no query is typed. Pass `after` to fetch the next page below
+    /// a cursor the caller already holds.
+    public func recent(limit: Int = 200, after cursor: Cursor? = nil) throws -> [ScreenshotRecord] {
         try queue.sync {
             var stmt: OpaquePointer?
-            let sql = "SELECT id, path, name, captured_at, mtime, size, width, height, ocr_text, pinned, pinned_at FROM screenshots ORDER BY captured_at DESC LIMIT ?;"
+            var sql = "SELECT id, path, name, captured_at, mtime, size, width, height, ocr_text, pinned, pinned_at FROM screenshots"
+            if cursor != nil {
+                sql += " WHERE (captured_at < ? OR (captured_at = ? AND id < ?))"
+            }
+            sql += " ORDER BY captured_at DESC LIMIT ?;"
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { throw lastError() }
             defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_int(stmt, 1, Int32(limit))
+            var idx: Int32 = 1
+            if let cursor {
+                sqlite3_bind_double(stmt, idx, cursor.capturedAt); idx += 1
+                sqlite3_bind_double(stmt, idx, cursor.capturedAt); idx += 1
+                sqlite3_bind_int64(stmt, idx, cursor.id); idx += 1
+            }
+            sqlite3_bind_int(stmt, idx, Int32(limit))
             var out: [ScreenshotRecord] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
                 out.append(Self.row(from: stmt))
@@ -338,8 +364,8 @@ public final class ScreenshotStore: @unchecked Sendable {
     /// Runs a parsed `Query` and returns matching records. For Phase 1 this
     /// is a straightforward translation; in Phase 2 we'll add ranking via
     /// FTS5's bm25() for better relevance ordering.
-    public func search(_ query: Query, limit: Int = 200) throws -> [ScreenshotRecord] {
-        if query.isEmpty { return try recent(limit: limit) }
+    public func search(_ query: Query, limit: Int = 200, after cursor: Cursor? = nil) throws -> [ScreenshotRecord] {
+        if query.isEmpty { return try recent(limit: limit, after: cursor) }
 
         return try queue.sync {
             // Build WHERE incrementally. For FTS conditions we go through a
@@ -372,6 +398,16 @@ public final class ScreenshotStore: @unchecked Sendable {
                 nonFTSClauses.append("captured_at >= ? AND captured_at < ?")
                 binds.append(.double(range.lowerBound.timeIntervalSince1970))
                 binds.append(.double(range.upperBound.timeIntervalSince1970))
+            }
+
+            // Keyset pagination: continue strictly below the caller's cursor.
+            // Qualified with `s.` so it slots into the same WHERE/AND chain
+            // whether or not an FTS join is present.
+            if let cursor {
+                nonFTSClauses.append("(s.captured_at < ? OR (s.captured_at = ? AND s.id < ?))")
+                binds.append(.double(cursor.capturedAt))
+                binds.append(.double(cursor.capturedAt))
+                binds.append(.int64(cursor.id))
             }
 
             var sql = "SELECT s.id, s.path, s.name, s.captured_at, s.mtime, s.size, s.width, s.height, s.ocr_text, s.pinned, s.pinned_at FROM screenshots s"

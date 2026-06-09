@@ -24,6 +24,19 @@ public final class SearchViewModel {
     /// update so the UI can rely on it being valid when results change.
     public var selectedIndex: Int = 0
 
+    /// True while a `loadMore()` page fetch is in flight. Guards against the
+    /// grid's trailing-cell `onAppear` firing a second fetch before the
+    /// first appends.
+    public private(set) var isLoadingMore: Bool = false
+
+    /// False once a page comes back short of `pageSize` — we've reached the
+    /// end of the index and further `loadMore()` calls are no-ops.
+    public private(set) var canLoadMore: Bool = true
+
+    /// Rows fetched per page. The grid pages in more as the user scrolls
+    /// rather than loading the whole index up front.
+    private let pageSize = 200
+
     private let store: ScreenshotStore
     private var debounceTask: Task<Void, Never>?
 
@@ -80,11 +93,38 @@ public final class SearchViewModel {
     private func runQuery(_ text: String) {
         do {
             let query = QueryParser.parse(text)
-            self.results = try store.search(query, limit: 400)
+            let page = try store.search(query, limit: pageSize)
+            self.results = page
             self.selectedIndex = 0
+            // A full page means there may be more behind it; a short page
+            // (or empty) means we've hit the end of the index.
+            self.canLoadMore = page.count == pageSize
+            self.isLoadingMore = false
         } catch {
             NSLog("vista: search failed: \(error)")
             self.results = []
+            self.canLoadMore = false
+            self.isLoadingMore = false
+        }
+    }
+
+    /// Appends the next page of results below the last row currently shown.
+    /// Driven by the grid's trailing-cell `onAppear` for infinite scroll.
+    /// Selection is left untouched so paging in older rows never yanks the
+    /// highlight away from where the user is.
+    public func loadMore() {
+        guard canLoadMore, !isLoadingMore, let last = results.last else { return }
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+        do {
+            let query = QueryParser.parse(queryText)
+            let cursor = ScreenshotStore.Cursor(capturedAt: last.capturedAt.timeIntervalSince1970, id: last.id)
+            let page = try store.search(query, limit: pageSize, after: cursor)
+            self.results.append(contentsOf: page)
+            self.canLoadMore = page.count == pageSize
+        } catch {
+            NSLog("vista: loadMore failed: \(error)")
+            self.canLoadMore = false
         }
     }
 }

@@ -105,6 +105,65 @@ final class ScreenshotStoreTests: XCTestCase {
         XCTAssertEqual(results[0].name, "Mar.png")
     }
 
+    // MARK: - Keyset pagination
+
+    // Walk every page of `recent()` via the (captured_at, id) cursor and
+    // assert we see each row exactly once, newest-first, with no dupes or
+    // gaps — including a tie where two rows share a captured_at (the `id`
+    // tiebreaker is what keeps that pair from being skipped or repeated).
+    func testRecentPaginatesWithoutDupesOrGaps() throws {
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        // 25 rows on distinct timestamps + 2 sharing one timestamp = 27.
+        for i in 0..<25 {
+            try store.upsert(Self.sampleRecord(name: "S\(i).png",
+                                               capturedAt: base.addingTimeInterval(Double(i)),
+                                               text: "t"))
+        }
+        let tie = base.addingTimeInterval(100)
+        try store.upsert(Self.sampleRecord(name: "TieA.png", capturedAt: tie, text: "t"))
+        try store.upsert(Self.sampleRecord(name: "TieB.png", capturedAt: tie, text: "t"))
+
+        var seen: [Int64] = []
+        var cursor: ScreenshotStore.Cursor? = nil
+        let pageSize = 10
+        while true {
+            let page = try store.recent(limit: pageSize, after: cursor)
+            seen.append(contentsOf: page.map(\.id))
+            guard let last = page.last, page.count == pageSize else { break }
+            cursor = ScreenshotStore.Cursor(capturedAt: last.capturedAt.timeIntervalSince1970, id: last.id)
+        }
+
+        XCTAssertEqual(seen.count, 27)
+        XCTAssertEqual(Set(seen).count, 27, "no row should appear twice across pages")
+        // Page-stitched order must match a single unbounded fetch.
+        let oneShot = try store.recent(limit: 1000).map(\.id)
+        XCTAssertEqual(seen, oneShot)
+    }
+
+    // The cursor also has to thread through the FTS/date WHERE chain in
+    // `search()` — paginating a filtered result set, not just `recent()`.
+    func testSearchPaginatesWithCursor() throws {
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        for i in 0..<15 {
+            try store.upsert(Self.sampleRecord(name: "Match\(i).png",
+                                               capturedAt: base.addingTimeInterval(Double(i)),
+                                               text: "needle"))
+        }
+        try store.upsert(Self.sampleRecord(name: "Other.png", capturedAt: base, text: "haystack"))
+
+        let query = QueryParser.parse("needle")
+        let firstPage = try store.search(query, limit: 10)
+        XCTAssertEqual(firstPage.count, 10)
+        let cursor = ScreenshotStore.Cursor(
+            capturedAt: firstPage.last!.capturedAt.timeIntervalSince1970,
+            id: firstPage.last!.id)
+        let secondPage = try store.search(query, limit: 10, after: cursor)
+
+        let combined = (firstPage + secondPage).map(\.id)
+        XCTAssertEqual(combined.count, 15, "only the 15 needle rows, no haystack leak")
+        XCTAssertEqual(Set(combined).count, 15)
+    }
+
     // MARK: - Pinning
 
     func testPinSetsFlag() throws {
