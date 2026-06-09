@@ -17,7 +17,9 @@ public final class PanelController {
     private let actions: ActionHandlers
     private let preferences: Preferences
     // Held so the panel's empty state can react to access-blocked status.
-    // App-lifetime object, so the strong reference is intentional.
+    // `unowned` on purpose: AppState owns this PanelController, so a strong
+    // ref back would form a retain cycle. Both live for the whole app, so
+    // unowned is safe (it's never accessed after AppState is gone).
     private unowned let appState: AppState
 
     /// The app that was frontmost when the user invoked vista's hotkey —
