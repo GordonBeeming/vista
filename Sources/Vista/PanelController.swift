@@ -16,6 +16,9 @@ public final class PanelController {
     private let thumbnails: ThumbnailCache
     private let actions: ActionHandlers
     private let preferences: Preferences
+    // Held so the panel's empty state can react to access-blocked status.
+    // App-lifetime object, so the strong reference is intentional.
+    private unowned let appState: AppState
 
     /// The app that was frontmost when the user invoked vista's hotkey —
     /// captured before we steal focus so "Paste to Front App" can aim
@@ -28,16 +31,18 @@ public final class PanelController {
     /// the view-model is already fresh and there's nothing to reset.
     private var lastHiddenAt: Date?
 
-    public init(
+    init(
         store: ScreenshotStore,
         thumbnails: ThumbnailCache,
         actions: ActionHandlers,
-        preferences: Preferences
+        preferences: Preferences,
+        appState: AppState
     ) {
         self.store = store
         self.thumbnails = thumbnails
         self.actions = actions
         self.preferences = preferences
+        self.appState = appState
 
         // Wire the paste-to-front-app action. The closure runs on the
         // main actor (ActionHandlers is @MainActor) so it's safe to touch
@@ -65,12 +70,19 @@ public final class PanelController {
         // previous query is unlikely to still be relevant, wipe back to
         // a clean state before the window is visible. Decided on each
         // show so changing the timeout in Settings takes effect
-        // immediately. Skip on the very first show of the session
-        // (lastHiddenAt == nil) — the view-model is already fresh.
+        // immediately. Any shorter gap (and the very first show, when
+        // lastHiddenAt is nil) falls through to a plain reload so freshly
+        // indexed screenshots appear.
         if let last = lastHiddenAt,
            let timeout = preferences.panelResetTimeout.seconds,
            Date().timeIntervalSince(last) >= timeout {
             viewModel?.resetState()
+        } else {
+            // Otherwise keep the user's query but refresh the rows — the
+            // indexer may have added screenshots since the panel was last
+            // shown, and without this the grid would keep showing the stale
+            // (possibly empty) result set from a previous open.
+            viewModel?.reload()
         }
         // Apply the latest panel-size preference every show so Appearance
         // slider changes take effect without needing a relaunch.
@@ -149,6 +161,7 @@ public final class PanelController {
             thumbnails: thumbnails,
             actions: actions,
             preferences: preferences,
+            appState: appState,
             dismiss: { [weak self] in self?.hidePanel() }
         )
 

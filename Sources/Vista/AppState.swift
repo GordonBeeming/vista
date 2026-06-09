@@ -22,8 +22,16 @@ final class AppState {
     /// the Permissions tab.
     var indexedCount: Int {
         if case .watching(let n) = indexingProgress { return n }
-        if case .indexing(let done, _) = indexingProgress { return done }
+        if case .indexing(_, _, let indexed) = indexingProgress { return indexed }
         return 0
+    }
+
+    /// Folders we hold indexed rows for but couldn't read on the last scan.
+    /// Non-empty drives the "grant access" messaging in the menu and panel;
+    /// the index itself is preserved untouched while this is set.
+    var accessBlockedFolders: [URL] {
+        if case .accessBlocked(let folders) = indexingProgress { return folders }
+        return []
     }
 
     let preferences = Preferences()
@@ -68,7 +76,8 @@ final class AppState {
                 store: store,
                 thumbnails: thumbnails,
                 actions: actions,
-                preferences: prefs
+                preferences: prefs,
+                appState: self
             )
 
             // Register the current hotkey chord.

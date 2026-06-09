@@ -18,6 +18,15 @@ struct MenuBarContentView: View {
     var body: some View {
         Text(statusLine)
 
+        // Surfaced only when a folder we already indexed can't be read.
+        // The index is preserved while this shows — granting access lets
+        // the scan resume without re-processing anything.
+        if !appState.accessBlockedFolders.isEmpty {
+            Button("Grant Folder Access…") {
+                openFullDiskAccessSettings()
+            }
+        }
+
         Divider()
 
         Button("Search Screenshots…") {
@@ -108,20 +117,46 @@ struct MenuBarContentView: View {
     private var statusLine: String {
         switch appState.indexingProgress {
         case .idle:
-            return "Vista — idle"
+            return "Vista — up to date"
         case .enumerating(let folders):
-            return folders == 1 ? "Scanning folder…" : "Scanning \(folders) folders…"
-        case .indexing(let done, let total):
+            return folders == 1
+                ? "Scanning your screenshots folder…"
+                : "Scanning your screenshots folders…"
+        case .indexing(let done, let total, let indexed):
             if total == 0 {
                 // Empty queue = fully resumed from the DB, everything
                 // was already indexed. Jump straight to the steady-state
                 // message so the user doesn't see a flash of "0 / 0".
-                return "Up to date"
+                return "\(Self.grouped(indexed)) screenshots ready"
             }
-            return "OCR'ing \(done) / \(total) new images"
+            // Show the work left to do plus how many are already searchable,
+            // so a large backlog never reads as "nothing indexed".
+            return "Reading text from screenshots · \(Self.grouped(done)) of \(Self.grouped(total))  ·  \(Self.grouped(indexed)) ready"
         case .watching(let indexed):
-            return "\(indexed) screenshots indexed"
+            return "\(Self.grouped(indexed)) screenshots ready"
+        case .accessBlocked:
+            return "Can't read your screenshots folder — grant access"
         }
+    }
+
+    /// Opens System Settings → Privacy & Security → Full Disk Access, where
+    /// the user can re-enable Vista's access to the (TCC-protected) iCloud
+    /// screenshots folder.
+    private func openFullDiskAccessSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private static let groupingFormatter: NumberFormatter = {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        return f
+    }()
+
+    /// Thousands-grouped count ("6,035") for the status line.
+    private static func grouped(_ n: Int) -> String {
+        groupingFormatter.string(from: NSNumber(value: n)) ?? "\(n)"
     }
 }
 
