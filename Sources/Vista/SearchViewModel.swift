@@ -40,6 +40,12 @@ public final class SearchViewModel {
     private let store: ScreenshotStore
     private var debounceTask: Task<Void, Never>?
 
+    /// Bumped on every query. Each in-flight search captures the value at
+    /// launch and only applies its results if it's still current — so a
+    /// slower earlier search can't land on top of a newer one when several
+    /// reloads / keystrokes overlap.
+    private var queryGeneration = 0
+
     public init(store: ScreenshotStore) {
         self.store = store
         reload()
@@ -91,20 +97,32 @@ public final class SearchViewModel {
     }
 
     private func runQuery(_ text: String) {
-        do {
-            let query = QueryParser.parse(text)
-            let page = try store.search(query, limit: pageSize)
-            self.results = page
-            self.selectedIndex = 0
-            // A full page means there may be more behind it; a short page
-            // (or empty) means we've hit the end of the index.
-            self.canLoadMore = page.count == pageSize
-            self.isLoadingMore = false
-        } catch {
-            NSLog("vista: search failed: \(error)")
-            self.results = []
-            self.canLoadMore = false
-            self.isLoadingMore = false
+        queryGeneration &+= 1
+        let generation = queryGeneration
+        let query = QueryParser.parse(text)
+        Task { [weak self, store, pageSize] in
+            do {
+                // Run the read off the main actor: `store`'s serial queue is
+                // shared with the indexer's writes, so a synchronous search on
+                // the main thread can stall the UI behind a write batch — and
+                // this now runs on every panel show, not just on keystrokes.
+                let page = try await Task.detached(priority: .userInitiated) {
+                    try store.search(query, limit: pageSize)
+                }.value
+                guard let self, generation == self.queryGeneration else { return }
+                self.results = page
+                self.selectedIndex = 0
+                // A full page means there may be more behind it; a short page
+                // (or empty) means we've hit the end of the index.
+                self.canLoadMore = page.count == pageSize
+                self.isLoadingMore = false
+            } catch {
+                guard let self, generation == self.queryGeneration else { return }
+                NSLog("vista: search failed: \(error)")
+                self.results = []
+                self.canLoadMore = false
+                self.isLoadingMore = false
+            }
         }
     }
 

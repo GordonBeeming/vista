@@ -22,9 +22,17 @@ final class AppState {
     /// the Permissions tab.
     var indexedCount: Int {
         if case .watching(let n) = indexingProgress { return n }
-        if case .indexing(let done, _) = indexingProgress { return done }
+        if case .indexing(_, _, let indexed) = indexingProgress { return indexed }
         return 0
     }
+
+    /// Folders we hold indexed rows for but couldn't read on the last scan.
+    /// Sticky state, NOT derived from `indexingProgress`: each scan emits
+    /// `.indexing` / `.watching` after the access check, which would clobber
+    /// a progress-derived value before the UI rendered it. Fed instead by the
+    /// indexer's dedicated `accessUpdates` stream, so the "grant access" CTA
+    /// stays up until a later scan clears it.
+    var accessBlockedFolders: [URL] = []
 
     let preferences = Preferences()
 
@@ -68,7 +76,8 @@ final class AppState {
                 store: store,
                 thumbnails: thumbnails,
                 actions: actions,
-                preferences: prefs
+                preferences: prefs,
+                appState: self
             )
 
             // Register the current hotkey chord.
@@ -82,6 +91,15 @@ final class AppState {
             Task { [weak self] in
                 for await progress in indexer.progressUpdates {
                     await MainActor.run { self?.indexingProgress = progress }
+                }
+            }
+
+            // Access-blocked stream → sticky observable property. Kept off the
+            // progress stream so later `.indexing`/`.watching` events can't
+            // clear the "grant access" CTA before it's seen.
+            Task { [weak self] in
+                for await folders in indexer.accessUpdates {
+                    await MainActor.run { self?.accessBlockedFolders = folders }
                 }
             }
 

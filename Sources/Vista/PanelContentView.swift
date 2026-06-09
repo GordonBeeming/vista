@@ -28,6 +28,7 @@ struct PanelContentView: View {
     let thumbnails: ThumbnailCache
     let actions: ActionHandlers
     let preferences: Preferences
+    let appState: AppState
     let dismiss: () -> Void
 
     // Drives keyboard focus so the search field is live the moment the
@@ -57,7 +58,9 @@ struct PanelContentView: View {
         VStack(spacing: 0) {
             searchBar
             Divider()
-            if model.results.isEmpty {
+            if !appState.accessBlockedFolders.isEmpty, model.results.isEmpty {
+                accessBlockedState
+            } else if model.results.isEmpty {
                 emptyState
             } else {
                 resultsGrid
@@ -132,6 +135,34 @@ struct PanelContentView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
             }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Shown instead of the "nothing indexed" empty state when a folder we
+    /// already indexed can't be read. The distinction matters: the index is
+    /// intact, so the message reassures rather than implying data loss, and
+    /// points the user at the one action that fixes it.
+    private var accessBlockedState: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "lock.shield")
+                .font(.system(size: 48, weight: .light))
+                .foregroundStyle(.tertiary)
+            Text("Vista can't read your screenshots folder")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+            Text("Your index is safe — nothing was deleted. Grant access and Vista picks up where it left off.")
+                .font(.subheadline)
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+            Button("Grant Folder Access…") {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .padding(.top, 4)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
