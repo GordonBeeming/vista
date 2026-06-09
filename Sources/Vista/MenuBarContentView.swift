@@ -115,6 +115,11 @@ struct MenuBarContentView: View {
     }
 
     private var statusLine: String {
+        // Access-blocked is sticky state that outlives a single progress
+        // event, so it takes precedence over whatever the scan reports next.
+        if !appState.accessBlockedFolders.isEmpty {
+            return "Can't read your screenshots folder — grant access"
+        }
         switch appState.indexingProgress {
         case .idle:
             return "Vista — up to date"
@@ -127,15 +132,13 @@ struct MenuBarContentView: View {
                 // Empty queue = fully resumed from the DB, everything
                 // was already indexed. Jump straight to the steady-state
                 // message so the user doesn't see a flash of "0 / 0".
-                return "\(Self.grouped(indexed)) screenshots ready"
+                return "\(indexed.formatted()) screenshots ready"
             }
             // Show the work left to do plus how many are already searchable,
             // so a large backlog never reads as "nothing indexed".
-            return "Reading text from screenshots · \(Self.grouped(done)) of \(Self.grouped(total))  ·  \(Self.grouped(indexed)) ready"
+            return "Reading text from screenshots · \(done.formatted()) of \(total.formatted())  ·  \(indexed.formatted()) ready"
         case .watching(let indexed):
-            return "\(Self.grouped(indexed)) screenshots ready"
-        case .accessBlocked:
-            return "Can't read your screenshots folder — grant access"
+            return "\(indexed.formatted()) screenshots ready"
         }
     }
 
@@ -148,16 +151,6 @@ struct MenuBarContentView: View {
         }
     }
 
-    private static let groupingFormatter: NumberFormatter = {
-        let f = NumberFormatter()
-        f.numberStyle = .decimal
-        return f
-    }()
-
-    /// Thousands-grouped count ("6,035") for the status line.
-    private static func grouped(_ n: Int) -> String {
-        groupingFormatter.string(from: NSNumber(value: n)) ?? "\(n)"
-    }
 }
 
 extension HotKeyChord {

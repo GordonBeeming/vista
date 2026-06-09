@@ -30,12 +30,6 @@ public actor Indexer {
         /// Live-watching mode. `indexed` is the current total row count
         /// so the UI can render "1,234 screenshots indexed".
         case watching(indexed: Int)
-        /// One or more folders we already hold indexed rows for couldn't be
-        /// read this scan (missing Full Disk Access, or an iCloud folder
-        /// that enumerated empty). We deliberately do NOT delete those rows
-        /// — the UI surfaces this so the user can restore access, and the
-        /// index resumes untouched once they do.
-        case accessBlocked(folders: [URL])
     }
 
     private let store: ScreenshotStore
@@ -62,10 +56,23 @@ public actor Indexer {
     // is Sendable — letting consumers `for await` without awaiting the actor.
     public nonisolated let progressUpdates: AsyncStream<Progress>
 
+    // Separate from `progressUpdates` on purpose: access-blocked status must
+    // not ride the progress stream, because each scan also emits `.indexing`
+    // / `.watching` afterwards, which would immediately overwrite it and the
+    // UI would never render the "grant access" state. This stream carries the
+    // blocked-folder list (empty when access is fine) exactly once per scan,
+    // so consumers can latch it as sticky state until the next scan clears it.
+    private var accessContinuation: AsyncStream<[URL]>.Continuation?
+    public nonisolated let accessUpdates: AsyncStream<[URL]>
+
     public init(store: ScreenshotStore, ocr: OCRRecognizer, watchedFolders: [URL]) {
         self.store = store
         self.ocr = ocr
         self.watchedFolders = watchedFolders
+
+        var accessCont: AsyncStream<[URL]>.Continuation!
+        self.accessUpdates = AsyncStream { accessCont = $0 }
+        self.accessContinuation = accessCont
 
         var cont: AsyncStream<Progress>.Continuation!
         self.progressUpdates = AsyncStream { cont = $0 }
@@ -98,6 +105,7 @@ public actor Indexer {
         eventTask?.cancel()
         workTask?.cancel()
         progressContinuation?.finish()
+        accessContinuation?.finish()
     }
 
     public func setPaused(_ paused: Bool) {
@@ -210,20 +218,33 @@ public actor Indexer {
         // gone from a folder we could actually read. A folder that failed
         // to enumerate — or came back empty while we still hold rows for it
         // (the fresh-install / iCloud-not-materialised case) — never causes
-        // deletions; instead we surface `.accessBlocked` so the user can
+        // deletions; instead we emit it on `accessUpdates` so the user can
         // restore access and the index resumes untouched. The per-file
         // `fileExists` check is the final belt: iCloud dataless placeholders
         // still report true, so they're preserved even if discovery missed
         // them.
         let known = try store.pathsOnDisk()
         let reconcile = Self.reconcileDeletions(known: known, roots: rootScans)
-        for stale in reconcile.delete where !fm.fileExists(atPath: stale) {
+        // Files missing from a folder we could read: delete, but only after
+        // fileExists confirms they're really gone (iCloud placeholders report
+        // present, so they survive).
+        for stale in reconcile.deleteMissing where !fm.fileExists(atPath: stale) {
             try? store.delete(path: URL(fileURLWithPath: stale))
         }
+        // Orphans belong to folders no longer watched — their files still
+        // exist on disk, so the fileExists guard would wrongly keep them.
+        // Delete unconditionally. reconcileDeletions only reports orphans when
+        // the watched-root set is trustworthy, so a failed-to-load folder list
+        // can't turn every row into an "orphan" and wipe the index.
+        for orphan in reconcile.deleteOrphans {
+            try? store.delete(path: URL(fileURLWithPath: orphan))
+        }
+        // Emit access state every scan (empty when fine) so the UI can latch
+        // it as sticky state — see `accessUpdates`.
         if !reconcile.blockedRoots.isEmpty {
             VistaLog.log("  ACCESS BLOCKED for \(reconcile.blockedRoots.count) folder(s) holding indexed rows — preserving index, not deleting")
-            progressContinuation?.yield(.accessBlocked(folders: reconcile.blockedRoots.map { URL(fileURLWithPath: $0) }))
         }
+        accessContinuation?.yield(reconcile.blockedRoots.map { URL(fileURLWithPath: $0) })
 
         // --- Phase 3: fingerprint-filter. Anything whose (mtime, size)
         // matches the DB entry is already indexed; skip without OCR.
@@ -370,21 +391,42 @@ public actor Indexer {
     /// which roots are access-blocked. Pure so it can be unit-tested without
     /// touching the filesystem or OCR.
     ///
-    /// A known path is deleted only when its root was readable AND the path
-    /// wasn't seen this scan. A readable root that returned zero files while
-    /// we still hold rows under it is treated as blocked, not empty — that's
-    /// the fresh-install / lost-permission / iCloud-not-materialised case,
-    /// and deleting there is exactly the data-loss bug we're guarding. Rows
-    /// not under any watched root are left alone (folder removal reconciles
-    /// through `updateWatchedFolders`, not here).
+    /// Three buckets:
+    /// - `deleteMissing` — under a readable root but not seen this scan: the
+    ///   file is genuinely gone. A readable root that returned zero files
+    ///   while we still hold rows under it is treated as *blocked*, not empty
+    ///   — the fresh-install / lost-permission / iCloud-not-materialised case,
+    ///   and deleting there is exactly the data-loss bug we're guarding.
+    /// - `deleteOrphans` — not under any watched root, i.e. a folder the user
+    ///   unwatched. Returned ONLY when at least one root was accessible, so a
+    ///   watched-folder list that failed to load can't make every row look
+    ///   like an orphan and wipe the index.
+    /// - `blockedRoots` — readable-but-untrustworthy or unreadable roots that
+    ///   still hold rows; surfaced to the UI, never deleted from.
+    ///
+    /// Known paths are grouped by root in a single pass with prefixes computed
+    /// once, so this stays O(known) regardless of library size.
     static func reconcileDeletions(
         known: Set<String>,
         roots: [RootScanResult]
-    ) -> (delete: [String], blockedRoots: [String]) {
-        var delete: [String] = []
+    ) -> (deleteMissing: [String], deleteOrphans: [String], blockedRoots: [String]) {
+        var deleteMissing: [String] = []
+        var deleteOrphans: [String] = []
         var blockedRoots: [String] = []
-        for root in roots {
-            let knownUnder = known.filter { isPath($0, under: root.rootPath) }
+
+        let prefixes = roots.map { $0.rootPath.hasSuffix("/") ? $0.rootPath : $0.rootPath + "/" }
+        var pathsByRoot: [Int: [String]] = [:]
+        var orphans: [String] = []
+        for path in known {
+            if let index = prefixes.firstIndex(where: { path.hasPrefix($0) }) {
+                pathsByRoot[index, default: []].append(path)
+            } else {
+                orphans.append(path)
+            }
+        }
+
+        for (index, root) in roots.enumerated() {
+            let knownUnder = pathsByRoot[index] ?? []
             // Circuit breaker: an "accessible" root that found nothing while
             // we hold rows for it is not trustworthy — never wipe on it.
             let trustworthy = root.accessible
@@ -394,17 +436,18 @@ public actor Indexer {
                 continue
             }
             for path in knownUnder where !root.discoveredPaths.contains(path) {
-                delete.append(path)
+                deleteMissing.append(path)
             }
         }
-        return (delete, blockedRoots)
-    }
 
-    /// True when `path` lives inside `root` (strictly below it, so the root
-    /// directory itself never counts as one of its own file rows).
-    static func isPath(_ path: String, under root: String) -> Bool {
-        let prefix = root.hasSuffix("/") ? root : root + "/"
-        return path.hasPrefix(prefix)
+        // Only act on orphans when the root set is trustworthy enough to trust
+        // the "not under any root" conclusion. With no accessible root, the
+        // folder list may simply have failed to resolve — preserve everything.
+        if roots.contains(where: { $0.accessible }) {
+            deleteOrphans = orphans
+        }
+
+        return (deleteMissing, deleteOrphans, blockedRoots)
     }
 
     // MARK: - Helpers

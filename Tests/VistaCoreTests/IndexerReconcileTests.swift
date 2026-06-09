@@ -2,8 +2,8 @@
 //
 // These cover the pure decision helper behind the data-loss fix: a folder
 // we couldn't read (or that came back empty while we still hold rows for it)
-// must never cause deletions. Instead it's reported as access-blocked and
-// the index is left intact.
+// must never cause deletions. Orphans from unwatched folders are cleaned up,
+// but only when the watched-root set is trustworthy.
 
 import XCTest
 @testable import VistaCore
@@ -21,7 +21,8 @@ final class IndexerReconcileTests: XCTestCase {
 
         let result = Indexer.reconcileDeletions(known: known, roots: roots)
 
-        XCTAssertTrue(result.delete.isEmpty, "no rows should be deleted for an unreadable folder")
+        XCTAssertTrue(result.deleteMissing.isEmpty, "no rows should be deleted for an unreadable folder")
+        XCTAssertTrue(result.deleteOrphans.isEmpty)
         XCTAssertEqual(result.blockedRoots, [root])
     }
 
@@ -34,12 +35,13 @@ final class IndexerReconcileTests: XCTestCase {
 
         let result = Indexer.reconcileDeletions(known: known, roots: roots)
 
-        XCTAssertTrue(result.delete.isEmpty, "an empty scan must not wipe a populated index")
+        XCTAssertTrue(result.deleteMissing.isEmpty, "an empty scan must not wipe a populated index")
+        XCTAssertTrue(result.deleteOrphans.isEmpty)
         XCTAssertEqual(result.blockedRoots, [root])
     }
 
     // A genuinely-deleted file (root readable, file no longer discovered)
-    // is the one case where deletion is correct.
+    // is the one case where missing-file deletion is correct.
     func testReadableRootDeletesOnlyTrulyMissingFiles() {
         let known: Set<String> = [path("a.png"), path("b.png"), path("gone.png")]
         let discovered: Set<String> = [path("a.png"), path("b.png")]
@@ -47,7 +49,8 @@ final class IndexerReconcileTests: XCTestCase {
 
         let result = Indexer.reconcileDeletions(known: known, roots: roots)
 
-        XCTAssertEqual(result.delete, [path("gone.png")])
+        XCTAssertEqual(result.deleteMissing, [path("gone.png")])
+        XCTAssertTrue(result.deleteOrphans.isEmpty)
         XCTAssertTrue(result.blockedRoots.isEmpty)
     }
 
@@ -58,7 +61,8 @@ final class IndexerReconcileTests: XCTestCase {
 
         let result = Indexer.reconcileDeletions(known: known, roots: roots)
 
-        XCTAssertTrue(result.delete.isEmpty)
+        XCTAssertTrue(result.deleteMissing.isEmpty)
+        XCTAssertTrue(result.deleteOrphans.isEmpty)
         XCTAssertTrue(result.blockedRoots.isEmpty)
     }
 
@@ -70,19 +74,50 @@ final class IndexerReconcileTests: XCTestCase {
 
         let result = Indexer.reconcileDeletions(known: known, roots: roots)
 
-        XCTAssertTrue(result.delete.isEmpty)
+        // The /other/ path is an orphan, but with no accessible root we don't
+        // trust the "orphan" conclusion, so nothing is deleted.
+        XCTAssertTrue(result.deleteMissing.isEmpty)
+        XCTAssertTrue(result.deleteOrphans.isEmpty)
         XCTAssertTrue(result.blockedRoots.isEmpty, "no rows under the folder means nothing to warn about")
     }
 
-    // Rows not under any watched root are left alone here — removing a
-    // watched folder reconciles through updateWatchedFolders, not this path.
-    func testRowsOutsideAnyWatchedRootAreLeftAlone() {
+    // Rows not under any watched root are orphans from an unwatched folder.
+    // With a readable root present, they're cleaned up unconditionally — the
+    // files still exist on disk, so the fileExists guard alone wouldn't.
+    func testRowsOutsideAnyWatchedRootAreReturnedAsOrphans() {
         let known: Set<String> = [path("a.png"), "/Users/test/elsewhere/orphan.png"]
         let roots = [Indexer.RootScanResult(rootPath: root, accessible: true, discoveredPaths: [path("a.png")])]
 
         let result = Indexer.reconcileDeletions(known: known, roots: roots)
 
-        XCTAssertTrue(result.delete.isEmpty, "orphans outside the watched root aren't this function's job")
+        XCTAssertTrue(result.deleteMissing.isEmpty)
+        XCTAssertEqual(result.deleteOrphans, ["/Users/test/elsewhere/orphan.png"])
+        XCTAssertTrue(result.blockedRoots.isEmpty)
+    }
+
+    // The orphan-wipe guard: if NO root was accessible, an apparently-orphan
+    // path might just mean the watched-folder list failed to load. Preserve
+    // everything rather than deleting on an untrustworthy root set.
+    func testOrphansPreservedWhenNoAccessibleRoot() {
+        let known: Set<String> = [path("a.png"), "/Users/test/elsewhere/orphan.png"]
+        // Only an inaccessible root in the set → don't trust orphan status.
+        let roots = [Indexer.RootScanResult(rootPath: root, accessible: false, discoveredPaths: [])]
+
+        let result = Indexer.reconcileDeletions(known: known, roots: roots)
+
+        XCTAssertTrue(result.deleteOrphans.isEmpty, "no accessible root means we can't trust 'orphan'")
+        XCTAssertTrue(result.deleteMissing.isEmpty)
+        XCTAssertEqual(result.blockedRoots, [root], "the inaccessible root still holds a row → blocked")
+    }
+
+    // Empty root set (folder list failed to resolve) must never wipe.
+    func testEmptyRootSetDeletesNothing() {
+        let known: Set<String> = [path("a.png"), path("b.png")]
+
+        let result = Indexer.reconcileDeletions(known: known, roots: [])
+
+        XCTAssertTrue(result.deleteMissing.isEmpty)
+        XCTAssertTrue(result.deleteOrphans.isEmpty, "with no roots at all, every row would look orphaned — preserve")
         XCTAssertTrue(result.blockedRoots.isEmpty)
     }
 }

@@ -27,12 +27,12 @@ final class AppState {
     }
 
     /// Folders we hold indexed rows for but couldn't read on the last scan.
-    /// Non-empty drives the "grant access" messaging in the menu and panel;
-    /// the index itself is preserved untouched while this is set.
-    var accessBlockedFolders: [URL] {
-        if case .accessBlocked(let folders) = indexingProgress { return folders }
-        return []
-    }
+    /// Sticky state, NOT derived from `indexingProgress`: each scan emits
+    /// `.indexing` / `.watching` after the access check, which would clobber
+    /// a progress-derived value before the UI rendered it. Fed instead by the
+    /// indexer's dedicated `accessUpdates` stream, so the "grant access" CTA
+    /// stays up until a later scan clears it.
+    var accessBlockedFolders: [URL] = []
 
     let preferences = Preferences()
 
@@ -91,6 +91,15 @@ final class AppState {
             Task { [weak self] in
                 for await progress in indexer.progressUpdates {
                     await MainActor.run { self?.indexingProgress = progress }
+                }
+            }
+
+            // Access-blocked stream → sticky observable property. Kept off the
+            // progress stream so later `.indexing`/`.watching` events can't
+            // clear the "grant access" CTA before it's seen.
+            Task { [weak self] in
+                for await folders in indexer.accessUpdates {
+                    await MainActor.run { self?.accessBlockedFolders = folders }
                 }
             }
 
