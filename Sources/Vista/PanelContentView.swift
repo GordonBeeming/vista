@@ -173,9 +173,26 @@ struct PanelContentView: View {
                                 thumbnails: thumbnails,
                                 thumbSize: thumbCacheSize
                             )
-                            .onTapGesture {
+                            // Double-click before single so the single
+                            // handler doesn't also fire on a double: double
+                            // copies + dismisses (same as Enter), single just
+                            // moves the selection and leaves the panel up.
+                            .onTapGesture(count: 2) {
                                 model.selectedIndex = index
                                 runPrimary()
+                            }
+                            .onTapGesture(count: 1) {
+                                model.selectedIndex = index
+                            }
+                            // Infinite scroll: when the trailing cell scrolls
+                            // into view, page in the next batch. LazyVGrid only
+                            // realizes (and fires onAppear for) cells near the
+                            // viewport, so this fires once the user nears the
+                            // bottom of what's loaded.
+                            .onAppear {
+                                if record.id == model.results.last?.id {
+                                    model.loadMore()
+                                }
                             }
                         }
                     }

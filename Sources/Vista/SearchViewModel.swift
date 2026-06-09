@@ -24,6 +24,19 @@ public final class SearchViewModel {
     /// update so the UI can rely on it being valid when results change.
     public var selectedIndex: Int = 0
 
+    /// True while a `loadMore()` page fetch is in flight. Guards against the
+    /// grid's trailing-cell `onAppear` firing a second fetch before the
+    /// first appends.
+    public private(set) var isLoadingMore: Bool = false
+
+    /// False once a page comes back short of `pageSize` — we've reached the
+    /// end of the index and further `loadMore()` calls are no-ops.
+    public private(set) var canLoadMore: Bool = true
+
+    /// Rows fetched per page. The grid pages in more as the user scrolls
+    /// rather than loading the whole index up front.
+    private let pageSize = 200
+
     private let store: ScreenshotStore
     private var debounceTask: Task<Void, Never>?
 
@@ -80,11 +93,53 @@ public final class SearchViewModel {
     private func runQuery(_ text: String) {
         do {
             let query = QueryParser.parse(text)
-            self.results = try store.search(query, limit: 400)
+            let page = try store.search(query, limit: pageSize)
+            self.results = page
             self.selectedIndex = 0
+            // A full page means there may be more behind it; a short page
+            // (or empty) means we've hit the end of the index.
+            self.canLoadMore = page.count == pageSize
+            self.isLoadingMore = false
         } catch {
             NSLog("vista: search failed: \(error)")
             self.results = []
+            self.canLoadMore = false
+            self.isLoadingMore = false
+        }
+    }
+
+    /// Appends the next page of results below the last row currently shown.
+    /// Driven by the grid's trailing-cell `onAppear` for infinite scroll.
+    /// Selection is left untouched so paging in older rows never yanks the
+    /// highlight away from where the user is.
+    ///
+    /// The query runs off the main actor: `store`'s serial queue is shared
+    /// with the background indexer's upserts, so a synchronous `search` here
+    /// could block the main thread behind a write batch — visible as scroll
+    /// jank exactly when paging fires. We hop to a detached task for the read
+    /// and only touch `results` back on the main actor.
+    public func loadMore() {
+        guard canLoadMore, !isLoadingMore, let last = results.last else { return }
+        isLoadingMore = true
+        let query = QueryParser.parse(queryText)
+        let cursor = ScreenshotStore.Cursor(capturedAt: last.capturedAt.timeIntervalSince1970, id: last.id)
+        Task { [store, pageSize] in
+            defer { isLoadingMore = false }
+            do {
+                let page = try await Task.detached(priority: .userInitiated) {
+                    try store.search(query, limit: pageSize, after: cursor)
+                }.value
+                // The await above is a suspension point: a fresh query or
+                // reload may have replaced `results` while we were reading.
+                // If the tail moved, this page is stale — drop it rather than
+                // appending rows that no longer follow what's on screen.
+                guard last.id == results.last?.id else { return }
+                results.append(contentsOf: page)
+                canLoadMore = page.count == pageSize
+            } catch {
+                NSLog("vista: loadMore failed: \(error)")
+                canLoadMore = false
+            }
         }
     }
 }
