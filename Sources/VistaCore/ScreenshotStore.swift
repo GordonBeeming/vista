@@ -343,7 +343,11 @@ public final class ScreenshotStore: @unchecked Sendable {
             if cursor != nil {
                 sql += " WHERE (captured_at < ? OR (captured_at = ? AND id < ?))"
             }
-            sql += " ORDER BY captured_at DESC LIMIT ?;"
+            // `id DESC` mirrors the cursor's tie-break. Without it, rows
+            // sharing a captured_at have undefined order, so a page boundary
+            // landing mid-tie could emit a low id and then skip the higher-id
+            // tied rows when the next page applies `id < cursor.id`.
+            sql += " ORDER BY captured_at DESC, id DESC LIMIT ?;"
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { throw lastError() }
             defer { sqlite3_finalize(stmt) }
             var idx: Int32 = 1
@@ -421,7 +425,9 @@ public final class ScreenshotStore: @unchecked Sendable {
             } else if !nonFTSClauses.isEmpty {
                 sql += " WHERE " + nonFTSClauses.joined(separator: " AND ")
             }
-            sql += " ORDER BY s.captured_at DESC LIMIT ?;"
+            // `s.id DESC` mirrors the keyset cursor's tie-break so pagination
+            // stays deterministic when rows share a captured_at — see recent().
+            sql += " ORDER BY s.captured_at DESC, s.id DESC LIMIT ?;"
             binds.append(.int64(Int64(limit)))
 
             var stmt: OpaquePointer?

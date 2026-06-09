@@ -140,6 +140,34 @@ final class ScreenshotStoreTests: XCTestCase {
         XCTAssertEqual(seen, oneShot)
     }
 
+    // Regression for the tie-at-page-boundary skip: when more rows share a
+    // captured_at than fit in one page, the page boundary lands *inside* the
+    // tie group. The cursor predicate (`id < ?`) only continues correctly if
+    // ORDER BY also breaks ties by `id DESC` — otherwise SQLite's arbitrary
+    // tie order can emit a low id first, then permanently skip the higher-id
+    // tied rows. Five rows on one timestamp + pageSize 2 forces the split.
+    func testRecentPaginationSurvivesTieStraddlingPageBoundary() throws {
+        let tie = Date(timeIntervalSince1970: 1_700_000_000)
+        for i in 0..<5 {
+            try store.upsert(Self.sampleRecord(name: "Tie\(i).png", capturedAt: tie, text: "t"))
+        }
+
+        var seen: [Int64] = []
+        var cursor: ScreenshotStore.Cursor? = nil
+        let pageSize = 2
+        while true {
+            let page = try store.recent(limit: pageSize, after: cursor)
+            seen.append(contentsOf: page.map(\.id))
+            guard let last = page.last, page.count == pageSize else { break }
+            cursor = ScreenshotStore.Cursor(capturedAt: last.capturedAt.timeIntervalSince1970, id: last.id)
+        }
+
+        XCTAssertEqual(seen.count, 5, "no tied row skipped at the page boundary")
+        XCTAssertEqual(Set(seen).count, 5, "no tied row duplicated")
+        // Strictly descending id is the deterministic order the cursor relies on.
+        XCTAssertEqual(seen, seen.sorted(by: >))
+    }
+
     // The cursor also has to thread through the FTS/date WHERE chain in
     // `search()` — paginating a filtered result set, not just `recent()`.
     func testSearchPaginatesWithCursor() throws {
