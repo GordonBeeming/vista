@@ -180,6 +180,17 @@ jobs:
 
             app "Vista.app"
 
+            # brew upgrade replaces the bundle but leaves the old process
+            # running the stale binary. `uninstall quit:` Cmd-Q's it during the
+            # upgrade and `postflight` relaunches the freshly installed one, so
+            # the new version is what's actually running afterwards. (Stanza
+            # order is Homebrew-canonical: postflight before uninstall.)
+            postflight do
+              system_command "/usr/bin/open", args: ["-a", "Vista"]
+            end
+
+            uninstall quit: "com.gordonbeeming.vista"
+
             zap trash: [
               "~/Library/Application Support/Vista",
               "~/Library/Caches/com.gordonbeeming.vista",
