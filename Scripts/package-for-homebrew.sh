@@ -69,6 +69,16 @@ cask "vista" do
 
   app "Vista.app"
 
+  # Keep in sync with the CI cask in .github/workflows/build.yml.
+  # brew upgrade replaces the bundle but leaves the old process running the
+  # stale binary, so quit it on upgrade and relaunch the freshly installed
+  # one. `|| true` keeps a failed launch (headless install) non-fatal.
+  postflight do
+    system_command "/bin/sh", args: ["-c", "/usr/bin/open -a Vista || true"]
+  end
+
+  uninstall quit: "com.gordonbeeming.vista"
+
   zap trash: [
     "~/Library/Application Support/Vista",
     "~/Library/Caches/com.gordonbeeming.vista",
