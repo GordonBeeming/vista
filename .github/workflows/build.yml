@@ -186,7 +186,11 @@ jobs:
             # the new version is what's actually running afterwards. (Stanza
             # order is Homebrew-canonical: postflight before uninstall.)
             postflight do
-              system_command "/usr/bin/open", args: ["-a", "Vista"]
+              # Launch on every install (Gordon's call — it's a menu-bar
+              # indexer, so starting it right away is the point). `|| true`
+              # keeps a failed launch (e.g. a headless/non-GUI install) from
+              # aborting the install itself.
+              system_command "/bin/sh", args: ["-c", "/usr/bin/open -a Vista || true"]
             end
 
             uninstall quit: "com.gordonbeeming.vista"
