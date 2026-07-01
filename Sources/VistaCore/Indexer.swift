@@ -50,6 +50,16 @@ public actor Indexer {
     private var pendingIndex: Int = 0
     private var workTask: Task<Void, Never>?
     private var eventTask: Task<Void, Never>?
+    private var maintenanceTask: Task<Void, Never>?
+
+    // How often the self-heal loop re-arms the watcher and rescans. New
+    // files normally index instantly via FSEvents; this is the safety net
+    // for when that live path silently stops — most notably long-lived
+    // FSEvent streams on iCloud Drive folders, which have been observed to
+    // stop delivering while the app keeps running. 5 minutes keeps the
+    // worst-case staleness small without meaningful cost (a rescan with a
+    // populated DB is just a fingerprint walk).
+    private static let maintenanceInterval: Duration = .seconds(300)
 
     private var progressContinuation: AsyncStream<Progress>.Continuation?
     // nonisolated because the stream is immutable after init and AsyncStream
@@ -98,14 +108,36 @@ public actor Indexer {
         }
 
         await emitWatchingProgress()
+
+        maintenanceTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.maintenanceInterval)
+                if Task.isCancelled { return }
+                await self?.periodicMaintenance()
+            }
+        }
     }
 
     public func stop() {
         watcher.stop()
         eventTask?.cancel()
         workTask?.cancel()
+        maintenanceTask?.cancel()
         progressContinuation?.finish()
         accessContinuation?.finish()
+    }
+
+    /// Self-heal tick: re-arm the FSEvents stream (recovers a stream that
+    /// silently stopped delivering) then rescan to catch anything the live
+    /// path missed. Re-arm first so we're listening for new events before
+    /// the rescan enumerates — anything that lands in the gap is still
+    /// caught by the rescan, so there's no window where a file is lost.
+    /// Skipped while paused, matching the intent of the pause control.
+    private func periodicMaintenance() async {
+        guard !isPaused else { return }
+        watcher.stop()
+        watcher.start(paths: watchedFolders)
+        await rescanAll()
     }
 
     public func setPaused(_ paused: Bool) {

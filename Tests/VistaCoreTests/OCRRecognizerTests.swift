@@ -30,6 +30,43 @@ final class OCRRecognizerTests: XCTestCase {
         XCTAssertEqual(text, "")
     }
 
+    // MARK: - Timeout watchdog
+
+    private struct Boom: Error, Equatable {}
+
+    func testWithTimeoutReturnsFastResult() async throws {
+        let value = try await withTimeout(.seconds(5), onTimeout: Boom()) {
+            "done"
+        }
+        XCTAssertEqual(value, "done")
+    }
+
+    func testWithTimeoutThrowsWhenWorkExceedsDeadline() async {
+        do {
+            _ = try await withTimeout(.milliseconds(20), onTimeout: Boom()) {
+                // Far longer than the deadline; the watchdog should fire first.
+                try await Task.sleep(for: .seconds(10))
+                return "should not reach here"
+            }
+            XCTFail("expected the timeout to throw")
+        } catch {
+            XCTAssertEqual(error as? Boom, Boom())
+        }
+    }
+
+    func testWithTimeoutPropagatesOperationError() async {
+        do {
+            _ = try await withTimeout(.seconds(5), onTimeout: Boom()) {
+                throw OCRRecognizer.OCRError.unreadableImage(URL(fileURLWithPath: "/nope.png"))
+            }
+            XCTFail("expected the operation error to propagate")
+        } catch let error as OCRRecognizer.OCRError {
+            XCTAssertEqual(error, .unreadableImage(URL(fileURLWithPath: "/nope.png")))
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+    }
+
     // MARK: - Fixture rendering
 
     /// Draws black text on a white background. Large font so Vision has
