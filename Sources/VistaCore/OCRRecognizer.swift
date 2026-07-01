@@ -56,7 +56,7 @@ public final class OCRRecognizer: Sendable {
 
         // Both the decode and the Vision call run inside the timeout so a
         // stall in either one is bounded. The decode moves off the caller's
-        // thread into the worked task as a side effect, which is harmless.
+        // thread into the worker task as a side effect, which is harmless.
         return try await withTimeout(timeout, onTimeout: OCRError.timedOut(url)) {
             // Load once via ImageIO — avoids pulling the full decoded bitmap
             // into memory when Vision can stream from the CGImage source.
@@ -156,28 +156,60 @@ public final class OCRRecognizer: Sendable {
 }
 
 /// Runs `operation`, throwing `onTimeout` if it hasn't finished within
-/// `timeout`. Races the work against a sleeper in a task group and cancels
-/// the loser. The work task is cooperatively cancelled on timeout — a
-/// synchronous, non-cancellable call inside it (Vision's `perform`, an
-/// ImageIO decode) keeps running to completion in the background but its
-/// result is discarded, so this bounds the *await*, not necessarily the CPU.
-/// That's the right trade for a watchdog: the caller is freed to move on.
+/// `timeout`. The caller is freed the instant either the work or the deadline
+/// settles, even when the work is stuck in a non-cancellable synchronous call
+/// (Vision's `perform`, an ImageIO decode) that ignores cooperative cancellation.
+///
+/// This deliberately does NOT use a `withThrowingTaskGroup`: a structured group
+/// cannot return from its scope until every child task has finished, so if the
+/// operation hangs the group hangs with it and the timeout never frees the
+/// caller — defeating the whole watchdog. Instead the work runs in an
+/// unstructured task that the caller never awaits directly. The caller suspends
+/// on a continuation that whichever of {work, deadline} finishes first resumes
+/// via a one-shot gate; a hung work task is simply orphaned (it finishes in the
+/// background and its late result is discarded). This bounds the *await*, not
+/// necessarily the CPU — the right trade for a watchdog.
 func withTimeout<T: Sendable>(
     _ timeout: Duration,
     onTimeout: @autoclosure @escaping @Sendable () -> Error,
     operation: @escaping @Sendable () async throws -> T
 ) async throws -> T {
-    try await withThrowingTaskGroup(of: T.self) { group in
-        group.addTask { try await operation() }
-        group.addTask {
-            try await Task.sleep(for: timeout)
-            throw onTimeout()
+    return try await withCheckedThrowingContinuation { continuation in
+        let gate = TimeoutGate(continuation)
+        let deadline = Task {
+            do {
+                try await Task.sleep(for: timeout)
+                gate.resume(with: .failure(onTimeout()))
+            } catch {
+                // Sleep cancelled because the work settled first — nothing to do.
+            }
         }
-        // The first task to finish wins; cancel the other and return.
-        guard let result = try await group.next() else {
-            throw onTimeout()
+        Task {
+            do { gate.resume(with: .success(try await operation())) }
+            catch { gate.resume(with: .failure(error)) }
+            // Stop the watchdog as soon as the work settles so the common fast
+            // path doesn't leave a task sleeping out the full timeout.
+            deadline.cancel()
         }
-        group.cancelAll()
-        return result
+    }
+}
+
+/// One-shot resume gate for `withTimeout`: only the first of {work, deadline}
+/// resumes the caller; the loser's later attempt is dropped. The NSLock guards
+/// the single-resume invariant that `CheckedContinuation` asserts on. Declared
+/// at file scope because Swift can't nest a type inside a generic function.
+private final class TimeoutGate<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var resumed = false
+    private let continuation: CheckedContinuation<T, Error>
+
+    init(_ continuation: CheckedContinuation<T, Error>) { self.continuation = continuation }
+
+    func resume(with result: Result<T, Error>) {
+        lock.lock()
+        let firstTime = !resumed
+        resumed = true
+        lock.unlock()
+        if firstTime { continuation.resume(with: result) }
     }
 }

@@ -54,6 +54,27 @@ final class OCRRecognizerTests: XCTestCase {
         }
     }
 
+    func testWithTimeoutFreesCallerWhenWorkIgnoresCancellation() async {
+        // The regression the codex/copilot review caught: a structured task
+        // group won't return until every child finishes, so a work task stuck
+        // in a non-cancellable synchronous call would hang the watchdog too.
+        // Here the operation blocks the thread with Thread.sleep (which ignores
+        // cooperative cancellation); the caller must still be freed at the
+        // deadline rather than waiting the full 2s.
+        let start = Date()
+        do {
+            _ = try await withTimeout(.milliseconds(50), onTimeout: Boom()) {
+                Thread.sleep(forTimeInterval: 2)
+                return "should not reach here"
+            }
+            XCTFail("expected the timeout to throw")
+        } catch {
+            XCTAssertEqual(error as? Boom, Boom())
+            XCTAssertLessThan(Date().timeIntervalSince(start), 1.5,
+                              "caller should be freed at the deadline, not after the blocking work")
+        }
+    }
+
     func testWithTimeoutPropagatesOperationError() async {
         do {
             _ = try await withTimeout(.seconds(5), onTimeout: Boom()) {

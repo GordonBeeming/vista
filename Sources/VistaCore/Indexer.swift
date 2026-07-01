@@ -51,6 +51,12 @@ public actor Indexer {
     private var workTask: Task<Void, Never>?
     private var eventTask: Task<Void, Never>?
     private var maintenanceTask: Task<Void, Never>?
+    // Guards against overlapping maintenance ticks. `periodicMaintenance()`
+    // awaits `rescanAll()`, and the actor suspends across that await; if a scan
+    // runs longer than `maintenanceInterval` (large backlog, slow disk/iCloud),
+    // the next tick would otherwise start a second concurrent scan. The flag
+    // makes a still-running scan swallow the next tick instead.
+    private var isMaintenanceRunning = false
 
     // How often the self-heal loop re-arms the watcher and rescans. New
     // files normally index instantly via FSEvents; this is the safety net
@@ -112,8 +118,11 @@ public actor Indexer {
         maintenanceTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: Self.maintenanceInterval)
-                if Task.isCancelled { return }
-                await self?.periodicMaintenance()
+                // Bail if the actor was deallocated — `self?` would silently
+                // no-op the call while the loop kept sleeping forever, leaking
+                // the task.
+                guard let self, !Task.isCancelled else { return }
+                await self.periodicMaintenance()
             }
         }
     }
@@ -134,7 +143,9 @@ public actor Indexer {
     /// caught by the rescan, so there's no window where a file is lost.
     /// Skipped while paused, matching the intent of the pause control.
     private func periodicMaintenance() async {
-        guard !isPaused else { return }
+        guard !isPaused, !isMaintenanceRunning else { return }
+        isMaintenanceRunning = true
+        defer { isMaintenanceRunning = false }
         watcher.stop()
         watcher.start(paths: watchedFolders)
         await rescanAll()
