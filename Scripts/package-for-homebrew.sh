@@ -65,7 +65,7 @@ cask "vista" do
   desc "Search your screenshots by text, name or date — OCR-powered"
   homepage "https://github.com/${REPO}"
 
-  depends_on macos: ">= :sonoma"
+  depends_on macos: :sonoma
 
   app "Vista.app"
 
