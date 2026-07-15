@@ -111,32 +111,36 @@ jobs:
             --sign "Developer ID Application" \
             Distribution/Vista.app
 
-      - name: Notarise application
+      - name: Create, sign, notarise, and validate DMG
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
-          ditto -c -k --keepParent Distribution/Vista.app Distribution/Vista-notarize.zip
-          xcrun notarytool submit Distribution/Vista-notarize.zip \
-            --apple-id "${APPLE_ID}" \
-            --team-id "${APPLE_TEAM_ID}" \
-            --password "${APPLE_APP_PASSWORD}" \
-            --wait
-          rm Distribution/Vista-notarize.zip
-
-      - name: Staple notarisation ticket
-        run: xcrun stapler staple Distribution/Vista.app
-
-      - name: Create DMG
-        run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          DMG="Distribution/Vista-${VERSION}.dmg"
           hdiutil create \
             -volname "Vista" \
             -srcfolder Distribution/Vista.app \
             -ov \
             -format UDZO \
-            "Distribution/Vista-${VERSION}.dmg"
+            "${DMG}"
+          codesign --force \
+            --timestamp \
+            --sign "Developer ID Application" \
+            "${DMG}"
+          codesign --verify --verbose=2 "${DMG}"
+          xcrun notarytool submit "${DMG}" \
+            --apple-id "${APPLE_ID}" \
+            --team-id "${APPLE_TEAM_ID}" \
+            --password "${APPLE_APP_PASSWORD}" \
+            --wait
+          xcrun stapler staple "${DMG}"
+          xcrun stapler validate "${DMG}"
+          hdiutil verify "${DMG}"
+          spctl -a -t open \
+            --context context:primary-signature \
+            -vv "${DMG}"
 
       - name: Upload release asset
         env:
