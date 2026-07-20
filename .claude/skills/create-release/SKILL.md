@@ -21,28 +21,29 @@ Create a new GitHub release for vista with the correct versioning.
    git log ${LAST_TAG}..HEAD --oneline
    ```
 5. Create the release:
-   ```bash
-   gh release create v{major}.{minor} \
-     --repo gordonbeeming/vista \
-     --target main \
-     --title "v{major}.{minor} — {short description}" \
-     --notes "$(cat <<'EOF'
-   # vista v{major}.{minor} — {short description}
 
-   ## What's new
+````bash
+gh release create v{major}.{minor} \
+  --repo gordonbeeming/vista \
+  --target main \
+  --title "v{major}.{minor} — {short description}" \
+  --notes "$(cat <<'EOF'
+# vista v{major}.{minor} — {short description}
 
-   - {list changes since last release using git log}
+## What's new
 
-   ## Install
+- {list changes since last release using git log}
 
-   ```bash
-   brew upgrade --cask gordonbeeming/tap/vista
-   ```
+## Install
 
-   Or download the DMG from the assets below.
-   EOF
-   )"
-   ```
+```bash
+brew upgrade --cask gordonbeeming/tap/vista
+```
+
+Or download the DMG from the assets below.
+EOF
+)"
+````
 6. The release pipeline will automatically:
    - Build + test
    - Sign with Developer ID
